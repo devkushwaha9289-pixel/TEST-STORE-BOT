@@ -3,8 +3,9 @@
 """
 VILLAGEE SMS SHOP v28.1 — runner.py
 Per-bot Application builder and multi-bot runner.
++ Mini App integration (WebApp menu button + /app command)
 """
-from miniapp_integration import cmd_app, set_menu_button
+
 import asyncio
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telethon import TelegramClient
@@ -29,8 +30,17 @@ async def _post_init_for(app, ctx):
             log.info(f"✅ Telethon @{ctx.username}")
         except Exception as e:
             log.error(f"Telethon @{ctx.username}: {e}")
+
         asyncio.create_task(fampay_imap_poll_loop())
         asyncio.create_task(cache_lzt_stock_loop())
+
+        # ⭐ Mini App — set bot menu button (opens WebApp)
+        try:
+            await set_menu_button(app, ctx.username)
+            log.info(f"✅ Mini App menu set @{ctx.username}")
+        except Exception as e:
+            log.warning(f"Mini App menu @{ctx.username}: {e}")
+
         log.info(f"✅ Loops @{ctx.username}")
     finally:
         _current_bot.reset(tok)
@@ -42,10 +52,16 @@ def build_app_for_ctx(ctx):
            .build())
     ctx.app = app
     W = lambda fn: _wrap_cb(fn, ctx)
+
+    # ---- Commands ----
     app.add_handler(CommandHandler("start", W(cmd_start)))
     app.add_handler(CommandHandler("cancel", W(cmd_cancel)))
     app.add_handler(CommandHandler("admin", W(cmd_admin)))
     app.add_handler(CommandHandler("stock", W(cmd_stock)))
+    app.add_handler(CommandHandler("app",  W(cmd_app)))    # ⭐ Mini App
+    app.add_handler(CommandHandler("shop", W(cmd_app)))    # ⭐ alias
+
+    # ---- Callbacks / Messages ----
     app.add_handler(CallbackQueryHandler(W(on_callback)))
     app.add_handler(MessageHandler(filters.Document.ALL, W(handle_document)))
     app.add_handler(MessageHandler(filters.PHOTO, W(on_photo)))
@@ -114,5 +130,6 @@ from context import (
 )
 from fampay import fampay_imap_poll_loop
 from lzt_api import cache_lzt_stock_loop
+from miniapp_integration import cmd_app, set_menu_button   # ⭐ Mini App
 from text_handlers import on_error, on_photo, on_text, on_video
 from zip_upload import handle_document
