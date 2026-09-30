@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ============================================================
-# VILLAGEE SMS SHOP — ULTIMATE v28.2
+# VILLAGEE SMS SHOP — ULTIMATE v28.3  (ALL-IN-ONE)
 # ============================================================
-#  ✅ FamPay NEW email format (UTR/TXN only)
-#  ✅ Flask health server (main thread — Render-safe)
-#  ✅ Bot runs in background thread
-#  ✅ Conflict recovery (deleteWebhook drop_pending_updates)
+#  ✅ Bot (background thread)
+#  ✅ Flask Health Server (main thread — Render-safe, PORT env)
+#  ✅ Mini App (FastAPI, background thread — MINIAPP_PORT env)
+#  ✅ FamPay NEW format (UTR/TXN only)
+#  ✅ Conflict recovery (deleteWebhook + drop_pending_updates)
+#  ✅ Ek command: `python main.py` → sab kuch chalu
 # ============================================================
 """
 ENTRY POINT — run:  python main.py
@@ -30,7 +32,21 @@ log = logging.getLogger("villagee.main")
 
 
 # ============================================================
-# FLASK HEALTH SERVER (INLINE — कोई import fail नहीं होगा)
+# CONFIG (read early so all threads see same values)
+# ============================================================
+HEALTH_PORT   = int(os.getenv("PORT", "8000"))
+HEALTH_HOST   = os.getenv("HEALTH_HOST", "0.0.0.0")
+MINIAPP_PORT  = int(os.getenv("MINIAPP_PORT", "8080"))
+MINIAPP_HOST  = os.getenv("MINIAPP_HOST", "0.0.0.0")
+MINIAPP_URL   = os.getenv("MINIAPP_URL", "https://test-store-bot-1.onrender.com").rstrip("/")
+
+# Make sure miniapp_integration sees it
+if MINIAPP_URL:
+    os.environ["MINIAPP_URL"] = MINIAPP_URL
+
+
+# ============================================================
+# 1) FLASK HEALTH SERVER (MAIN THREAD — Render sees PORT)
 # ============================================================
 def _build_flask_app():
     try:
@@ -129,6 +145,18 @@ def _build_flask_app():
         if not bots_html:
             bots_html = "<tr><td colspan='4'>No bots registered</td></tr>"
 
+        miniapp_box = ""
+        if MINIAPP_URL:
+            miniapp_box = (
+                f"<div class='card'><div class='k'>Mini App</div>"
+                f"<div class='v'><a href='{MINIAPP_URL}' target='_blank'>{MINIAPP_URL}</a></div></div>"
+            )
+        else:
+            miniapp_box = (
+                "<div class='card'><div class='k'>Mini App</div>"
+                "<div class='v' style='color:#f59e0b'>⚠️ NOT SET</div></div>"
+            )
+
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{STORE_HEADER} — Health</title>
@@ -163,6 +191,8 @@ a{{color:#60a5fa}}
   <div class="card"><div class="k">Bots</div><div class="v">{snap.get('total_bots',0)}</div></div>
   <div class="card"><div class="k">Users</div><div class="v">{snap.get('total_users',0)}</div></div>
 </div>
+<div class="section-title">🌐 Mini App</div>
+<div class="grid">{miniapp_box}</div>
 <div class="section-title">⚙️ Services</div>
 <div class="grid">
   <div class="card"><div class="k">Bot</div><div class="v">{pill(_flag('bot_status'))}</div></div>
@@ -181,7 +211,7 @@ a{{color:#60a5fa}}
 <div class="section-title">🤖 Bots</div>
 <table><thead><tr><th>Bot</th><th>Owner</th><th>Users</th><th>Status</th></tr></thead>
 <tbody>{bots_html}</tbody></table>
-<footer>VILLAGEE SMS SHOP v28.2 | <a href="/health">/health</a> | <a href="/status">/status</a></footer>
+<footer>VILLAGEE SMS SHOP v28.3 | <a href="/health">/health</a> | <a href="/status">/status</a> | <a href="/ping">/ping</a></footer>
 </div></body></html>"""
         return html, 200
 
@@ -194,6 +224,7 @@ a{{color:#60a5fa}}
             "healthy": healthy,
             "uptime": _uptime(time.time() - START_TS),
             "time_ist": datetime.now(IST).strftime("%d-%m-%Y %I:%M:%S %p"),
+            "miniapp_url": MINIAPP_URL or None,
             "bots": {
                 "total": snap.get("total_bots", 0),
                 "running": snap.get("running", 0),
@@ -206,9 +237,10 @@ a{{color:#60a5fa}}
         snap = _snapshot()
         return jsonify({
             "store": "VILLAGEE SMS SHOP",
-            "version": "28.2",
+            "version": "28.3",
             "time_ist": datetime.now(IST).strftime("%d-%m-%Y %I:%M:%S %p"),
             "uptime": _uptime(time.time() - START_TS),
+            "miniapp_url": MINIAPP_URL or None,
             "bots": snap,
             "flags": {
                 "bot": _flag("bot_status"),
@@ -228,10 +260,9 @@ a{{color:#60a5fa}}
 
 
 # ============================================================
-# BOT THREAD TARGET
+# 2) BOT THREAD (background — own asyncio event loop)
 # ============================================================
 def _bot_thread_target():
-    """Run the entire multi-bot asyncio system in its own event loop."""
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -247,6 +278,33 @@ def _bot_thread_target():
 
 
 # ============================================================
+# 3) MINI APP THREAD (background — uvicorn/FastAPI on own port)
+# ============================================================
+def _miniapp_thread_target():
+    try:
+        import uvicorn
+        from miniapp.server import app as fastapi_app
+    except Exception as e:
+        log.warning(f"⚠️  Mini App not started: {e}")
+        log.warning("   Fix: pip install -r miniapp/requirements.txt")
+        return
+
+    try:
+        cfg = uvicorn.Config(
+            fastapi_app,
+            host=MINIAPP_HOST,
+            port=MINIAPP_PORT,
+            log_level="warning",
+            access_log=False,
+        )
+        server = uvicorn.Server(cfg)
+        log.info(f"🌐 Mini App server listening on http://{MINIAPP_HOST}:{MINIAPP_PORT}")
+        server.run()
+    except Exception as e:
+        log.exception(f"❌ Mini App crashed: {e}")
+
+
+# ============================================================
 # MAIN
 # ============================================================
 def main():
@@ -254,24 +312,30 @@ def main():
     from context import BOTS_CONFIG_FILE, MASTER_OWNER_ID
     from utils import QR_AVAILABLE
 
-    print("=" * 60)
-    print(f"  {STORE_HEADER} v28.2")
+    print("=" * 62)
+    print(f"  {STORE_HEADER} v28.3  (Bot + Flask Health + Mini App)")
+    print("=" * 62)
     print(f"  ✅ FamPay NEW format (UTR/TXN only)")
-    print(f"  ✅ Flask health (main thread) + Bot (background thread)")
-    print(f"  Master Owner: {MASTER_OWNER_ID}")
-    print(f"  Bot Token: {'SET' if BOT_TOKEN else 'NOT SET'}")
-    print(f"  Order Prefix: {ORDER_PREFIX}")
-    print(f"  QR: {'OK' if QR_AVAILABLE else 'MISSING'}")
-    print(f"  Config: {BOTS_CONFIG_FILE}")
-    print("=" * 60)
+    print(f"  ✅ Flask Health : http://{HEALTH_HOST}:{HEALTH_PORT}/")
+    print(f"  🌐 Mini App     : http://{MINIAPP_HOST}:{MINIAPP_PORT}/")
+    print(f"  🔗 Mini App URL : {MINIAPP_URL or '⚠️  NOT SET (set MINIAPP_URL for WebApp)'}")
+    print(f"  👑 Master Owner : {MASTER_OWNER_ID}")
+    print(f"  🤖 Bot Token    : {'SET' if BOT_TOKEN else 'NOT SET'}")
+    print(f"  📦 Order Prefix : {ORDER_PREFIX}")
+    print(f"  🔲 QR           : {'OK' if QR_AVAILABLE else 'MISSING'}")
+    print(f"  📁 Config       : {BOTS_CONFIG_FILE}")
+    print(f"  🕒 TZ           : IST (UTC+5:30)")
+    print("=" * 62)
 
     if not QR_AVAILABLE:
         print("⚠️  pip install qrcode[pil]")
+    if not MINIAPP_URL:
+        print("⚠️  MINIAPP_URL not set → /app command will show 'not configured'")
     if not os.path.exists("bots"):
         os.makedirs("bots", exist_ok=True)
 
     # ─────────────────────────────────────────────
-    # 1️⃣ Start BOT in background thread
+    # 1️⃣ BOT — background thread
     # ─────────────────────────────────────────────
     bot_thread = threading.Thread(
         target=_bot_thread_target,
@@ -282,26 +346,42 @@ def main():
     log.info("🤖 Bot thread started (background)")
 
     # ─────────────────────────────────────────────
-    # 2️⃣ Start Flask in MAIN thread (Render sees port)
+    # 2️⃣ MINI APP — background thread
+    # ─────────────────────────────────────────────
+    miniapp_thread = threading.Thread(
+        target=_miniapp_thread_target,
+        name="miniapp-server",
+        daemon=True,
+    )
+    miniapp_thread.start()
+    log.info("🌐 Mini App thread started (background)")
+
+    # small grace so both bind their ports before Flask blocks
+    time.sleep(0.8)
+
+    # ─────────────────────────────────────────────
+    # 3️⃣ FLASK HEALTH — MAIN thread (Render-safe)
     # ─────────────────────────────────────────────
     app = _build_flask_app()
     if app is None:
-        log.error("❌ Flask unavailable — running bot only (no health endpoint)")
+        log.error("❌ Flask unavailable — bot + miniapp still running (no health endpoint)")
         try:
             while True:
                 time.sleep(60)
         except KeyboardInterrupt:
             return
 
-    port = int(os.getenv("PORT", "8000"))
-    host = os.getenv("HEALTH_HOST", "0.0.0.0")
-    log.info(f"🌐 Flask health starting on http://{host}:{port}/")
-
+    log.info(f"🌐 Flask health starting on http://{HEALTH_HOST}:{HEALTH_PORT}/")
     try:
-        app.run(host=host, port=port, debug=False, threaded=True,
-                use_reloader=False)
+        app.run(
+            host=HEALTH_HOST,
+            port=HEALTH_PORT,
+            debug=False,
+            threaded=True,
+            use_reloader=False,
+        )
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\n🛑 Shutting down...")
 
 
 if __name__ == "__main__":
