@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VILLAGEE SMS SHOP v28.4 — fampay.py
+VILLAGEE SMS SHOP v28.5 — fampay.py
 ============================================================
-FamPay Auto-Verification — ALL IMAP ISSUES FIXED
+FamPay Auto-Verification — FINAL COMPLETE WORKING VERSION
 ============================================================
 
-Fixes:
-✅ App Password space strip (16-char)
-✅ IMAP timeout (15s) — no hang
-✅ SINCE 3 days (survives manual read)
-✅ Only official sender (no-reply@famapp.in)
-✅ Plain + HTML body merge
-✅ Multi-charset decode
-✅ Amount + UTR + TXN + Balance extraction
+✅ Read/Unread — कोई फर्क नहीं (SINCE 3 days, सब scan)
+✅ Multi-layer DUPLICATE check (UTR + TXN, सभी directions)
+✅ Auto-REJECT duplicates
+✅ Security: cross-order, cross-user, cross-bot dedup
 ✅ Every failure → Owner DM + Log channel
-✅ IMAP login failure → Owner alert once per hour
-✅ Detailed error logging
+✅ IMAP robust: 15s timeout, App Password space strip
+✅ Works with FamPay new email format (UTR/TXN only)
 """
 
 import re
@@ -28,7 +24,7 @@ import email
 import traceback
 from datetime import datetime, timedelta
 from html import escape
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, List
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from telegram import InlineKeyboardMarkup
@@ -38,7 +34,7 @@ from telegram import InlineKeyboardMarkup
 # RATE LIMIT — imap failure alert (1 per hour)
 # ============================================================
 _last_imap_alert_ts = 0.0
-_IMAP_ALERT_COOLDOWN = 3600  # 1 hour
+_IMAP_ALERT_COOLDOWN = 3600
 
 
 # ============================================================
@@ -82,7 +78,6 @@ class FamPayEmailParser:
 
     @staticmethod
     def _get_body(msg):
-        """Merge text/plain and text/html (decoded with fallback charsets)."""
         plain, html = "", ""
         parts = msg.walk() if msg.is_multipart() else [msg]
         for p in parts:
@@ -95,7 +90,6 @@ class FamPayEmailParser:
                 pl = p.get_payload(decode=True)
                 if not pl:
                     continue
-                # Try multiple charsets
                 text = ""
                 for enc in (p.get_content_charset(), "utf-8", "latin-1", "cp1252"):
                     if not enc:
@@ -150,8 +144,7 @@ class FamPayEmailParser:
             "payment_status": None, "date": None, "time": None,
             "subject": subject, "balance": None,
             "email_from": email_from, "email_date": None,
-            "summary": None, "parse_ok": False,
-            "parse_error": None,
+            "summary": None, "parse_ok": False, "parse_error": None,
         }
 
         try:
@@ -229,7 +222,7 @@ class FamPayEmailParser:
         if bal:
             d["balance"] = bal.replace(",", "").strip().rstrip(".")
 
-        # date/time
+        # date / time
         mon = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
         tpat = r'\d{1,2}:\d{2}\s*(?:AM|PM)'
         dpat = rf'\d{{1,2}}\s+{mon}\s*,?\s*\d{{4}}'
@@ -289,7 +282,8 @@ class FamPayEmailParser:
         d["parse_ok"] = bool(d.get("amount") and (d.get("utr") or d.get("transaction_id")))
         if not d["parse_ok"]:
             missing = []
-            if not d.get("amount"): missing.append("amount")
+            if not d.get("amount"):
+                missing.append("amount")
             if not d.get("utr") and not d.get("transaction_id"):
                 missing.append("utr/txn")
             d["parse_error"] = "missing: " + ",".join(missing)
@@ -297,25 +291,20 @@ class FamPayEmailParser:
 
 
 # ============================================================
-# IMAP FETCH — robust with timeout + retries
+# IMAP FETCH — READ + UNREAD दोनों (कोई फर्क नहीं)
 # ============================================================
 def _strip_pwd(pwd: str) -> str:
-    """Remove spaces (Gmail App Passwords are shown with spaces)."""
     return re.sub(r'\s+', '', str(pwd or ""))
 
 
-def _imap_fetch_fampay_emails_blocking(ea, ap):
+def _imap_fetch_fampay_emails_blocking(ea: str, ap: str):
     """
-    Robust IMAP fetch:
-      - 15s socket timeout
-      - Auto strip App Password spaces
-      - INBOX fallback: [Gmail]/All Mail
-      - SINCE last 3 days (UTC)
-      - Official sender exact match
+    Fetch ALL emails from official FamPay sender within last 3 days.
+    READ + UNREAD दोनों catch होंगे (SINCE based, not UNSEEN).
     Returns: (emails_list, error_string_or_None)
     """
     conn = None
-    out = []
+    out: List[Tuple[str, bytes]] = []
     err = None
     ea = (ea or "").strip()
     ap = _strip_pwd(ap)
@@ -328,10 +317,8 @@ def _imap_fetch_fampay_emails_blocking(ea, ap):
         try:
             conn.login(ea, ap)
         except imaplib.IMAP4.error as le:
-            err = f"LOGIN_FAILED: {le}"
-            return out, err
+            return out, f"LOGIN_FAILED: {le}"
 
-        # Try INBOX first
         try:
             conn.select("INBOX")
         except Exception:
@@ -342,7 +329,8 @@ def _imap_fetch_fampay_emails_blocking(ea, ap):
 
         since = (datetime.utcnow() - timedelta(days=3)).strftime("%d-%b-%Y")
 
-        # Exact official sender
+        # ✅ SINCE only — READ/UNREAD दोनों included
+        # ✅ Exact official sender
         st, data = conn.search(None, f'(SINCE "{since}" FROM "{FAMPAY_SENDER}")')
         if st != "OK":
             # Fallback domain search
@@ -351,7 +339,7 @@ def _imap_fetch_fampay_emails_blocking(ea, ap):
                 return out, f"search failed: {st}"
 
         ids = data[0].split() if data and data[0] else []
-        ids = ids[-100:] if len(ids) > 100 else ids
+        ids = ids[-200:] if len(ids) > 200 else ids  # safety cap
 
         for mid in ids:
             try:
@@ -368,14 +356,127 @@ def _imap_fetch_fampay_emails_blocking(ea, ap):
         return out, f"{type(e).__name__}: {e}"
     finally:
         if conn:
-            try: conn.close()
-            except Exception: pass
-            try: conn.logout()
-            except Exception: pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            try:
+                conn.logout()
+            except Exception:
+                pass
 
 
 # ============================================================
-# MATCHING
+# 🔒 MULTI-LAYER DUPLICATE DETECTION
+# ============================================================
+def _detect_duplicate(utr: Optional[str], txn: Optional[str],
+                      current_oid: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Multi-direction duplicate scan. Returns dict with info if duplicate found.
+
+    Checks:
+      1. UTR used in another COMPLETED order (status=success)
+      2. TXN used in another COMPLETED order
+      3. UTR used in a DIFFERENT pending order (same user or other)
+      4. TXN used in a DIFFERENT pending order
+      5. UTR/TXN already in fampay_emails with a DIFFERENT matched_order_id
+    """
+    result = None
+
+    if utr:
+        u = str(utr).strip().upper()
+
+        # 1) Used in another COMPLETED order
+        row = cur.execute(
+            """SELECT order_id, user_id, amount FROM upi_orders
+               WHERE UPPER(utr)=? AND status='success'
+                 AND order_id != ? LIMIT 1""",
+            (u, current_oid or "")
+        ).fetchone()
+        if row:
+            return {"type": "UTR_COMPLETED",
+                    "existing_order": row["order_id"],
+                    "existing_user": row["user_id"],
+                    "existing_amount": row["amount"],
+                    "utr": utr}
+
+        # 2) Used in a DIFFERENT pending order
+        row = cur.execute(
+            """SELECT order_id, user_id, amount FROM upi_orders
+               WHERE UPPER(utr)=? AND status='pending'
+                 AND order_id != ? LIMIT 1""",
+            (u, current_oid or "")
+        ).fetchone()
+        if row:
+            return {"type": "UTR_PENDING",
+                    "existing_order": row["order_id"],
+                    "existing_user": row["user_id"],
+                    "existing_amount": row["amount"],
+                    "utr": utr}
+
+        # 3) Already in fampay_emails with different matched order
+        row = cur.execute(
+            """SELECT msg_id, matched_order_id FROM fampay_emails
+               WHERE UPPER(utr)=? AND matched_order_id IS NOT NULL
+                 AND matched_order_id != '' AND matched_order_id != ?
+               LIMIT 1""",
+            (u, current_oid or "")
+        ).fetchone()
+        if row:
+            return {"type": "UTR_EMAIL_MATCHED",
+                    "existing_order": row["matched_order_id"],
+                    "existing_user": None,
+                    "existing_amount": None,
+                    "utr": utr}
+
+    if txn:
+        t = str(txn).strip().upper()
+
+        row = cur.execute(
+            """SELECT order_id, user_id, amount FROM upi_orders
+               WHERE UPPER(txn_id)=? AND status='success'
+                 AND order_id != ? LIMIT 1""",
+            (t, current_oid or "")
+        ).fetchone()
+        if row:
+            return {"type": "TXN_COMPLETED",
+                    "existing_order": row["order_id"],
+                    "existing_user": row["user_id"],
+                    "existing_amount": row["amount"],
+                    "txn": txn}
+
+        row = cur.execute(
+            """SELECT order_id, user_id, amount FROM upi_orders
+               WHERE UPPER(txn_id)=? AND status='pending'
+                 AND order_id != ? LIMIT 1""",
+            (t, current_oid or "")
+        ).fetchone()
+        if row:
+            return {"type": "TXN_PENDING",
+                    "existing_order": row["order_id"],
+                    "existing_user": row["user_id"],
+                    "existing_amount": row["amount"],
+                    "txn": txn}
+
+        row = cur.execute(
+            """SELECT msg_id, matched_order_id FROM fampay_emails
+               WHERE UPPER(txn_id)=? AND matched_order_id IS NOT NULL
+                 AND matched_order_id != '' AND matched_order_id != ?
+               LIMIT 1""",
+            (t, current_oid or "")
+        ).fetchone()
+        if row:
+            return {"type": "TXN_EMAIL_MATCHED",
+                    "existing_order": row["matched_order_id"],
+                    "existing_user": None,
+                    "existing_amount": None,
+                    "txn": txn}
+
+    return result
+
+
+# ============================================================
+# MATCHING pending order
 # ============================================================
 def _find_matching_pending_order(amount, oid_email, utr):
     if oid_email:
@@ -410,7 +511,7 @@ def _find_matching_pending_order(amount, oid_email, utr):
 
 
 # ============================================================
-# ALERTS (owner + logs)
+# ALERTS — Owner DM + Log channel
 # ============================================================
 async def _send_to_owner_and_logs(blocks, fallback_text, reply_markup=None):
     try:
@@ -425,7 +526,6 @@ async def _send_to_owner_and_logs(blocks, fallback_text, reply_markup=None):
 
 
 async def _alert_imap_error(err_msg):
-    """IMAP login/connection failed — alert owner (rate limited to 1/hr)."""
     global _last_imap_alert_ts
     now = time.time()
     if now - _last_imap_alert_ts < _IMAP_ALERT_COOLDOWN:
@@ -434,8 +534,8 @@ async def _alert_imap_error(err_msg):
 
     blocks = [make_heading("🚨 FAMPAY IMAP ERROR", 2),
               make_paragraph(
-                  "Gmail IMAP login/fetch fail ho raha hai.\n"
-                  "Auto-verification WORK नहीं कर रहा!"),
+                  "Gmail IMAP login/fetch fail हो रहा है।\n"
+                  "Auto-verification काम नहीं कर रहा!"),
               make_table([["⚠️ ERROR", str(err_msg)[:200]],
                           ["📧 Sender", FAMPAY_SENDER],
                           ["🕐 Time", datetime.now(IST).strftime("%d-%m-%Y %I:%M:%S %p")]])]
@@ -444,9 +544,7 @@ async def _alert_imap_error(err_msg):
         [ibtn("TEST IMAP", "adm_gmail_test", emoji="🧪", style="success")],
         [ibtn("HOME", "home", emoji="🏠", style="primary")]])
     await _send_to_owner_and_logs(
-        blocks,
-        f"🚨 FamPay IMAP ERROR: {str(err_msg)[:150]}",
-        kb.to_dict()
+        blocks, f"🚨 FamPay IMAP ERROR: {str(err_msg)[:150]}", kb.to_dict()
     )
 
 
@@ -461,9 +559,9 @@ async def _alert_order_not_found(parsed):
             ["⏰ Time", str(parsed.get("time") or "—")],
             ["📧 From", str(parsed.get("email_from") or "—")[:60]],
             ["⚠️ Reason", "No matching pending order"]]
-    blocks = [make_heading("⚠️ FAMPAY PAYMENT — ORDER NOT FOUND", 2),
+    blocks = [make_heading("⚠️ FAMPAY — ORDER NOT FOUND", 2),
               make_paragraph(
-                  "Payment email आया, लेकिन कोई pending order match नहीं हुआ.\n\n"
+                  "Payment email आया, लेकिन कोई pending order match नहीं हुआ।\n\n"
                   "Possible reasons:\n"
                   "• User ने order बनाए बिना pay किया\n"
                   "• Order expire हो गया (>15 min)\n"
@@ -524,35 +622,63 @@ async def _send_mismatch_alert(uid, oid, exp, paid, utr=None, txn=None, src="aut
         f"⚠️ Mismatch: {oid} | Exp ₹{int(exp)} | Paid ₹{paid}")
 
 
-async def _send_double_payment_alert(uid, oid, utr, txn, existing):
-    msg = (f"<b>{emo('🚫')} DUPLICATE PAYMENT BLOCKED</b>\n\n"
+async def _send_duplicate_alert(uid, oid, dup_info, parsed):
+    """Duplicate UTR/TXN — auto-reject with multi-layer alert."""
+    utr = parsed.get("utr") or "—"
+    txn = parsed.get("transaction_id") or "—"
+    existing = dup_info.get("existing_order") or "—"
+    etype = dup_info.get("type") or "UNKNOWN"
+
+    label_map = {
+        "UTR_COMPLETED":   "UTR पहले use हो चुका (completed order)",
+        "UTR_PENDING":     "UTR किसी और pending order में है",
+        "UTR_EMAIL_MATCHED": "UTR पहले किसी और email से match हो चुका",
+        "TXN_COMPLETED":   "TXN पहले use हो चुका (completed order)",
+        "TXN_PENDING":     "TXN किसी और pending order में है",
+        "TXN_EMAIL_MATCHED": "TXN पहले किसी और email से match हो चुका",
+    }
+    reason = label_map.get(etype, "Duplicate detected")
+
+    msg = (f"<b>{emo('🚫')} DUPLICATE PAYMENT — AUTO REJECTED</b>\n\n"
            f"{emo('🆔')} <b>Your Order:</b> <code>{oid}</code>\n"
-           f"{emo('🔢')} <b>UTR:</b> <code>{utr or '—'}</code>\n"
-           f"{emo('🆔')} <b>TXN:</b> <code>{txn or '—'}</code>\n"
-           f"⚠️ Already used in <code>{existing}</code>.\n\n"
-           f"{emo('📞')} {get_contact_1()}")
+           f"{emo('🔢')} <b>UTR:</b> <code>{utr}</code>\n"
+           f"{emo('🆔')} <b>TXN:</b> <code>{txn}</code>\n"
+           f"{emo('💵')} <b>Amount:</b> ₹{parsed.get('amount') or '—'}\n\n"
+           f"⚠️ <b>Reason:</b> {reason}\n"
+           f"♻️ <b>Already used in:</b> <code>{existing}</code>\n\n"
+           f"<b>{emo('🚫')} Payment NOT credited</b>\n\n"
+           f"<b>{emo('👉')} Contact:</b> {get_contact_1()}")
     kb = InlineKeyboardMarkup([
-        [ibtn("CONTACT", url=get_support_url(), emoji="📞", style="success")],
+        [ibtn("CONTACT OWNER", url=get_support_url(), emoji="📞", style="success")],
         [ibtn("HOME", "home", emoji="🏠", style="primary")]])
     try:
         await _tg_post("sendMessage", {"chat_id": uid, "text": msg,
             "parse_mode": "HTML", "reply_markup": kb.to_dict()})
     except Exception:
         pass
-    blocks = [make_heading("🚫 DUPLICATE PAYMENT", 2),
+
+    blocks = [make_heading("🚫 DUPLICATE — AUTO REJECTED", 2),
               make_table([["ℹ️ INFO", "📋 DETAIL"],
-                          ["🆔 New Order", oid], ["👤 User", str(uid)],
-                          ["🔢 UTR", str(utr or "—")],
-                          ["🆔 TXN", str(txn or "—")],
-                          ["♻️ Already In", existing]])]
-    await _send_to_owner_and_logs(blocks,
-        f"🚫 Duplicate: {oid} → already in {existing}")
+                          ["🎯 Type", etype],
+                          ["⚠️ Reason", reason],
+                          ["🆔 New Order", oid],
+                          ["👤 User", str(uid)],
+                          ["🔢 UTR", utr],
+                          ["🆔 TXN", txn],
+                          ["💵 Amount", f"₹{parsed.get('amount') or '—'}"],
+                          ["♻️ Already In", str(existing)],
+                          ["📧 Email From", str(parsed.get("email_from") or "—")[:60]]])]
+    await _send_to_owner_and_logs(
+        blocks,
+        f"🚫 Duplicate ({etype}): Order {oid} → already in {existing}"
+    )
 
 
 # ============================================================
 # PROCESS EMAIL
 # ============================================================
 async def _process_fampay_email(mid, raw, parsed):
+    # already processed?
     if cur.execute("SELECT 1 FROM gmail_processed WHERE msg_id=?", (mid,)).fetchone():
         return
     cur.execute(
@@ -565,6 +691,7 @@ async def _process_fampay_email(mid, raw, parsed):
         await _alert_parse_failed(mid, raw, "parser returned None")
         return
 
+    # Sender strict check
     email_from = (parsed.get("email_from") or "").lower()
     if FAMPAY_SENDER.lower() not in email_from:
         log.info(f"⏭ Skipping non-official sender: {email_from}")
@@ -582,6 +709,7 @@ async def _process_fampay_email(mid, raw, parsed):
     utr = parsed.get("utr")
     txn = parsed.get("transaction_id")
 
+    # Save email record
     try:
         cur.execute(
             """INSERT OR IGNORE INTO fampay_emails
@@ -603,12 +731,7 @@ async def _process_fampay_email(mid, raw, parsed):
         await _alert_parse_failed(mid, raw, "amount missing")
         return
 
-    existing = None
-    if utr:
-        existing = is_utr_used_by_other_order(utr)
-    if not existing and txn:
-        existing = is_txn_used_by_other_order(txn)
-
+    # Find matching pending order
     match = _find_matching_pending_order(amount_f, parsed.get("order_id"), utr)
 
     if not match:
@@ -619,18 +742,33 @@ async def _process_fampay_email(mid, raw, parsed):
     uid = match["user_id"]
     exp = float(match["amount"])
 
-    if existing and existing != oid:
-        cur.execute(
-            """UPDATE upi_orders
-               SET status='duplicate', utr=?, txn_id=?, paid_amount=?,
-                   verified_via='fampay_duplicate_blocked'
-               WHERE order_id=?""",
-            (utr, txn, amount_f, oid)
-        )
-        db.commit()
-        await _send_double_payment_alert(uid, oid, utr, txn, existing)
+    # 🔒 MULTI-LAYER DUPLICATE CHECK (with current_oid for exclusion)
+    dup_info = _detect_duplicate(utr, txn, current_oid=oid)
+
+    if dup_info:
+        # AUTO-REJECT with duplicate status
+        try:
+            cur.execute(
+                """UPDATE upi_orders
+                   SET status='duplicate', utr=?, txn_id=?, paid_amount=?,
+                       verified_via=?
+                   WHERE order_id=?""",
+                (utr, txn, amount_f,
+                 f"dup_blocked:{dup_info.get('type')}", oid)
+            )
+            cur.execute(
+                "UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?",
+                (oid, mid)
+            )
+            db.commit()
+        except Exception as e:
+            log.warning(f"dup update: {e}")
+        await _send_duplicate_alert(uid, oid, dup_info, parsed)
+        log.warning(f"🚫 Duplicate blocked: {oid} type={dup_info.get('type')} "
+                    f"existing={dup_info.get('existing_order')}")
         return
 
+    # Amount mismatch check
     if abs(exp - amount_f) > 0.01:
         cur.execute(
             """UPDATE upi_orders
@@ -649,6 +787,7 @@ async def _process_fampay_email(mid, raw, parsed):
         await _send_mismatch_alert(uid, oid, exp, amount_f, utr, txn, "fampay_auto")
         return
 
+    # ✅ All checks passed → credit
     try:
         cur.execute(
             """UPDATE upi_orders
@@ -667,7 +806,7 @@ async def _process_fampay_email(mid, raw, parsed):
 
 
 # ============================================================
-# POLL LOOP — with failure alerting
+# POLL LOOP
 # ============================================================
 async def fampay_imap_poll_loop():
     log.info(f"📧 FamPay poll @{current_bot_username()}")
@@ -694,8 +833,6 @@ async def fampay_imap_poll_loop():
             if err:
                 fail_count += 1
                 log.warning(f"FamPay IMAP error (#{fail_count}): {err}")
-                # Alert owner on every 6th failure (≈ every minute) OR
-                # on critical errors immediately
                 if "LOGIN_FAILED" in err or fail_count >= 6:
                     await _alert_imap_error(err)
                     fail_count = 0
