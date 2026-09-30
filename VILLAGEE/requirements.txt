@@ -3,5 +3,7 @@ telethon
 aiohttp
 requests
 qrcode[pil]
-flask
-gunicorn
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
