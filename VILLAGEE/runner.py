@@ -4,7 +4,7 @@
 VILLAGEE SMS SHOP v28.1 — runner.py
 Per-bot Application builder and multi-bot runner.
 """
-
+from miniapp_integration import cmd_app, set_menu_button
 import asyncio
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telethon import TelegramClient
