@@ -1,36 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VILLAGEE SMS SHOP v28.1 — fampay.py
-FamPay email parser + Gmail IMAP polling for automatic UPI deposits.
-v28.2: NEW FamPay email format — verification via UTR / TXN only.
+VILLAGEE SMS SHOP v28.2 — fampay.py
+SINGLE FILE: FamPay auto-verification (new format, UTR/TXN only)
+
+Verified format (30-Sep-2026 sample):
+    Hey Dev Kushwaha,
+    You have successfully received
+    ₹1.0
+    from DEV KUSHWAHA
+    Transaction ID : FMPIB6697629157
+    Date : 11:09 AM IST, 30 September 2026
+    Updated Balance : ₹6.0
+    UTR : 735850853755
+
+Official sender ONLY: no-reply@famapp.in
 """
 
-import re, time, sqlite3, asyncio, imaplib, email
-from datetime import datetime
+import re
+import time
+import sqlite3
+import asyncio
+import imaplib
+import email
+from datetime import datetime, timedelta
 from html import escape
 from typing import Any, Dict
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from telegram import InlineKeyboardMarkup
 
+
 # ============================================================
-# FAMPAY — EMAIL PARSER (new format, UTR/TXN only)
+# EMAIL PARSER
 # ============================================================
 class FamPayEmailParser:
-    """
-    Parser for the NEW FamPay email format.
-    Verification is now done ONLY via UTR / TXN extracted from the email.
-    """
+    """Parser for the NEW FamPay email format."""
 
     @staticmethod
-    def _clean_value(v):
+    def _clean(v):
         if not v:
             return v
         return re.sub(r'\s+', ' ', str(v)).strip().rstrip(' .,;:')
 
     @staticmethod
-    def _extract(text, patterns):
+    def _find(text, patterns):
         for pat in patterns:
             m = re.search(pat, text, re.IGNORECASE | re.DOTALL)
             if m:
@@ -38,7 +52,7 @@ class FamPayEmailParser:
         return None
 
     @staticmethod
-    def _decode_header_value(v):
+    def _decode_hdr(v):
         if not v:
             return ""
         out = ""
@@ -52,14 +66,14 @@ class FamPayEmailParser:
         return out
 
     @staticmethod
-    def _get_body_text(msg):
+    def _body(msg):
         plain, html = "", ""
         if msg.is_multipart():
-            for part in msg.walk():
-                ct = part.get_content_type()
-                if "attachment" in str(part.get("Content-Disposition")):
+            for p in msg.walk():
+                ct = p.get_content_type()
+                if "attachment" in str(p.get("Content-Disposition")):
                     continue
-                pl = part.get_payload(decode=True)
+                pl = p.get_payload(decode=True)
                 if not pl:
                     continue
                 try:
@@ -77,35 +91,38 @@ class FamPayEmailParser:
                     dec = pl.decode("utf-8", errors="ignore")
                 except Exception:
                     dec = ""
-                ct = msg.get_content_type()
-                if ct == "text/plain":
+                if msg.get_content_type() == "text/plain":
                     plain = dec
-                elif ct == "text/html":
+                elif msg.get_content_type() == "text/html":
                     html = dec
         return plain, html
 
     @staticmethod
-    def _clean_html(h):
-        return re.sub(
-            r"\s+", " ",
-            re.sub(r"&[a-z]+;", " ", re.sub(r"<[^>]+>", " ", h))
-        ).strip()
+    def _strip_html(h):
+        h = re.sub(r"<style[^>]*>.*?</style>", " ", h, flags=re.I | re.S)
+        h = re.sub(r"<script[^>]*>.*?</script>", " ", h, flags=re.I | re.S)
+        h = re.sub(r"<br\s*/?>", " ", h, flags=re.I)
+        h = re.sub(r"</(div|p|tr|td|h[1-6])>", " ", h, flags=re.I)
+        h = re.sub(r"&nbsp;", " ", h, flags=re.I)
+        h = re.sub(r"&[a-z]+;", " ", h)
+        h = re.sub(r"<[^>]+>", " ", h)
+        return re.sub(r"\s+", " ", h).strip()
 
     # --------------------------------------------------------
-    def extract_details_from_raw(self, raw):
+    def from_raw(self, raw):
         try:
             msg = email.message_from_bytes(raw)
         except Exception:
             return None
-        return self.extract_details(msg)
+        return self.parse(msg)
 
-    def extract_details(self, msg) -> Dict[str, Any]:
-        subject = self._decode_header_value(msg.get("Subject") or "")
-        email_from = self._decode_header_value(msg.get("From") or "")
+    def parse(self, msg) -> Dict[str, Any]:
+        subject = self._decode_hdr(msg.get("Subject") or "")
+        email_from = self._decode_hdr(msg.get("From") or "")
         date_hdr = msg.get("Date") or ""
 
-        plain, html_body = self._get_body_text(msg)
-        html_clean = self._clean_html(html_body) if html_body else ""
+        plain, html_body = self._body(msg)
+        html_clean = self._strip_html(html_body) if html_body else ""
         combined = re.sub(r"\s+", " ", f"{subject} {plain} {html_clean}").strip()
         raw_email = re.sub(r'\s+', ' ', plain if plain else html_clean).strip()
 
@@ -113,8 +130,8 @@ class FamPayEmailParser:
             "amount": None,
             "transaction_id": None,
             "utr": None,
-            "order_id": None,
-            "purpose": None,
+            "order_id": None,        # not present in new format
+            "purpose": None,         # not present in new format
             "raw_email": raw_email,
             "received_from": None,
             "received_to": None,
@@ -130,7 +147,7 @@ class FamPayEmailParser:
             "summary": None,
         }
 
-        # ---------- email date in IST ----------
+        # email date (IST)
         try:
             d["email_date"] = parsedate_to_datetime(date_hdr).astimezone(IST).strftime(
                 "%d %b %Y, %I:%M %p"
@@ -138,71 +155,76 @@ class FamPayEmailParser:
         except Exception:
             d["email_date"] = date_hdr
 
-        # ---------- amount ----------
-        amt = self._extract(combined, [
+        # amount — prioritize "received ₹X" first to avoid matching balance
+        amt = self._find(combined, [
+            r'received\s+(?:an\s+amount\s+of\s+)?(?:₹|INR|Rs\.?)?\s*([\d,]+(?:\.\d+)?)',
+            r'(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d+)?)\s+from\b',
             r'(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d+)?)',
-            r'([\d,]+(?:\.\d+)?)\s*(?:₹|INR|Rs\.?)',
-            r'amount\s*[:=-]?\s*(?:₹|INR|Rs\.?)?\s*([\d,]+(?:\.\d+)?)',
         ])
         if amt:
             d["amount"] = amt.replace(",", "").strip().rstrip(".")
 
-        # ---------- transaction id ----------
-        txn = self._extract(combined, [
+        # transaction id
+        txn = self._find(combined, [
             r'(?:Transaction|Txn|Payment)\s*(?:ID|Id|No\.?|Number)\s*[:=-]?\s*([A-Za-z0-9]{6,})',
             r'(FMPIB\w+)',
         ])
         if txn:
-            d["transaction_id"] = self._clean_value(txn)
+            d["transaction_id"] = self._clean(txn)
 
-        # ---------- UTR ----------
-        utr = self._extract(combined, [
+        # UTR (numeric preferred)
+        utr = self._find(combined, [
+            r'UTR\s*(?:No\.?|Number|ID|Ref(?:erence)?)?\s*[:=-]?\s*(\d{6,})',
             r'UTR\s*(?:No\.?|Number|ID|Ref(?:erence)?)?\s*[:=-]?\s*([A-Za-z0-9]{6,})',
         ])
         if utr:
-            d["utr"] = self._clean_value(utr)
+            d["utr"] = self._clean(utr)
 
-        # ---------- sender ----------
-        sender = self._extract(combined, [
-            r'(?:Received\s*from|Sender|Paid\s*by)\s*[:=-]?\s*([A-Z][A-Za-z\s\.]+?)'
-            r'(?=\s+(?:Transaction|UTR|Amount|₹|INR|Rs|Date|Updated|Purpose|If)|$)',
-            r'\bfrom\s+([A-Z][A-Za-z\s]{2,40}?)'
-            r'(?=[.,]?\s+(?:Transaction|UTR|Amount|₹|INR|Rs|Date|Updated|If|for|at|on)\b|[.,]|$)',
+        # sender — "from DEV KUSHWAHA"
+        sender = self._find(combined, [
+            r'\bfrom\s+([A-Z][A-Za-z0-9\s\.\-&]{2,40}?)'
+            r'(?=[\s\.]+(?:Transaction|Txn|UTR|Amount|Date|Updated|Balance|If|Best|₹|INR|Rs)\b|[.,]|$)',
+            r'(?:Received\s*from|Sender|Paid\s*by)\s*[:=-]?\s*([A-Z][A-Za-z\s\.\-]{2,40}?)'
+            r'(?=[\s\.]+(?:Transaction|Txn|UTR|Amount|Date|Updated|Balance|If|₹|INR|Rs)\b|[.,]|$)',
         ])
         if sender:
-            d["received_from"] = d["sender_name"] = self._clean_value(sender)
+            d["received_from"] = d["sender_name"] = self._clean(sender)
 
-        # ---------- receiver ----------
-        receiver = self._extract(combined, [
-            r'(?:Hey|Hi|Hello)\s+([A-Z][A-Za-z\s]+?),',
-            r'(?:Received\s*by|Beneficiary|Receiver)\s*[:=-]?\s*([A-Z][A-Za-z\s\.]+?)'
-            r'(?=\s+(?:Transaction|UTR|Amount|₹|INR|Rs|Date|Updated|Purpose|If)|$)',
+        # receiver — greeting "Hey Dev Kushwaha,"
+        receiver = self._find(combined, [
+            r'(?:Hey|Hi|Hello)\s+([A-Z][A-Za-z\s\.\-]{1,40}?)\s*[,!]',
+            r'(?:Received\s*by|Beneficiary|Receiver)\s*[:=-]?\s*([A-Z][A-Za-z\s\.\-]{2,40}?)'
+            r'(?=[\s\.]+(?:Transaction|Txn|UTR|Amount|Date|Updated|Balance|₹|INR|Rs)\b|[.,]|$)',
         ])
         if receiver:
-            d["received_to"] = d["receiver_name"] = self._clean_value(receiver)
+            d["received_to"] = d["receiver_name"] = self._clean(receiver)
 
-        # ---------- status ----------
-        status = self._extract(combined, [r'(?:Payment\s*Status|Status)\s*[:=-]?\s*(\w+)'])
+        # status
+        status = self._find(combined, [
+            r'(?:Payment\s*Status|Status)\s*[:=-]?\s*([A-Za-z]+)',
+        ])
         if status:
             d["payment_status"] = status.upper().strip()
         else:
             lower = combined.lower()
-            if any(w in lower for w in ("success", "received", "credited", "completed")):
+            if any(w in lower for w in
+                   ("successfully received", "success", "received",
+                    "credited", "completed")):
                 d["payment_status"] = "SUCCESS"
             elif "failed" in lower:
                 d["payment_status"] = "FAILED"
             elif "pending" in lower:
                 d["payment_status"] = "PENDING"
 
-        # ---------- balance ----------
-        bal = self._extract(combined, [
-            r'(?:Updated|Available|Current|Wallet)?\s*Balance\s*[:=-]?\s*(?:is\s*)?'
-            r'(?:₹|INR|Rs\.?)?\s*([\d,]+(?:\.\d+)?)',
+        # balance
+        bal = self._find(combined, [
+            r'(?:Updated|Available|Current|Wallet)?\s*Balance\s*[:=-]?\s*'
+            r'(?:is\s*)?(?:₹|INR|Rs\.?)?\s*([\d,]+(?:\.\d+)?)',
         ])
         if bal:
             d["balance"] = bal.replace(",", "").strip().rstrip(".")
 
-        # ---------- date / time ----------
+        # date / time
         mon = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
         tpat = r'\d{1,2}:\d{2}\s*(?:AM|PM)'
         dpat = rf'\d{{1,2}}\s+{mon}\s*,?\s*\d{{4}}'
@@ -239,7 +261,7 @@ class FamPayEmailParser:
             except Exception:
                 pass
 
-        # ---------- summary ----------
+        # summary
         sm = f"{d['receiver_name']}, you received" if d.get("receiver_name") else "You received"
         sm += f" ₹{d['amount']}" if d.get("amount") else " a payment"
         if d.get("sender_name"):
@@ -248,19 +270,18 @@ class FamPayEmailParser:
             sm += f" on {d['date']} at {d['time']}"
         sm += "."
         if d.get("transaction_id"):
-            sm += f" Transaction ID {d['transaction_id']}."
+            sm += f" Txn {d['transaction_id']}."
         if d.get("utr"):
             sm += f" UTR {d['utr']}."
         if d.get("balance"):
-            sm += f" Updated balance ₹{d['balance']}."
+            sm += f" Balance ₹{d['balance']}."
         d["summary"] = sm
 
         for k in list(d.keys()):
             if isinstance(d[k], str):
-                d[k] = self._clean_value(d[k])
+                d[k] = self._clean(d[k])
         return d
 
-    # --------------------------------------------------------
     def summarize(self, details) -> str:
         details = details or {}
         out = "📧 <b>New Payment Email</b>\n\n"
@@ -292,29 +313,44 @@ class FamPayEmailParser:
 
 
 # ============================================================
-# IMAP FETCH
+# IMAP FETCH — only official sender (no-reply@famapp.in)
 # ============================================================
 def _imap_fetch_fampay_emails_blocking(ea, ap):
+    """
+    Search ONLY emails from the official FamPay sender (no-reply@famapp.in).
+    Uses SINCE (last 3 days) so manually-read emails are still picked up.
+    Dedup happens later via `gmail_processed` table.
+    """
     conn = None
     out = []
     try:
         conn = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
         conn.login(ea, ap)
         conn.select("INBOX")
-        result, data = conn.search(None, f'(FROM "{FAMPAY_SENDER}" UNSEEN)')
+
+        since = (datetime.utcnow() - timedelta(days=3)).strftime("%d-%b-%Y")
+
+        # ✅ EXACT sender match — official FamPay only
+        result, data = conn.search(
+            None, f'(SINCE "{since}" FROM "{FAMPAY_SENDER}")'
+        )
         if result != "OK":
+            log.warning(f"IMAP search failed: {result}")
             return out
-        for mid in data[0].split():
+
+        ids = data[0].split()
+        ids = ids[-100:] if len(ids) > 100 else ids  # safety cap
+
+        for mid in ids:
             try:
                 r2, md = conn.fetch(mid, "(RFC822)")
                 if r2 != "OK" or not md or not md[0]:
                     continue
                 out.append((mid.decode(), md[0][1]))
-                conn.store(mid, "+FLAGS", "\\Seen")
             except Exception:
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"IMAP fetch error: {e}")
     finally:
         if conn:
             try:
@@ -329,9 +365,17 @@ def _imap_fetch_fampay_emails_blocking(ea, ap):
 
 
 # ============================================================
-# MATCHING — UTR / TXN / AMOUNT
+# MATCHING — amount (email has no order_id)
 # ============================================================
 def _find_matching_pending_order(amount, oid_email, utr):
+    """
+    New FamPay emails do NOT carry merchant `order_id`.
+    Match order by:
+      1) exact order_id (legacy)
+      2) amount within last 15 minutes
+      3) amount (most recent)
+    Real verification still relies on UTR / TXN uniqueness.
+    """
     if oid_email:
         for cand in (oid_email, oid_email.strip(),
                      oid_email.strip().upper(), oid_email.strip().lower()):
@@ -405,7 +449,7 @@ async def _send_double_payment_alert(uid, oid, utr, txn, existing):
 
 
 # ============================================================
-# EMAIL PROCESSING
+# EMAIL PROCESSING — strict sender guard
 # ============================================================
 async def _process_fampay_email(mid, raw, parsed):
     if cur.execute("SELECT 1 FROM gmail_processed WHERE msg_id=?", (mid,)).fetchone():
@@ -418,6 +462,12 @@ async def _process_fampay_email(mid, raw, parsed):
     if not parsed:
         return
 
+    # ✅ STRICT sender guard — only official FamPay
+    email_from = (parsed.get("email_from") or "").lower()
+    if FAMPAY_SENDER.lower() not in email_from:
+        log.info(f"⏭ Skipping non-official sender: {email_from}")
+        return
+
     try:
         amount_f = float(parsed.get("amount")) if parsed.get("amount") else None
     except Exception:
@@ -425,6 +475,7 @@ async def _process_fampay_email(mid, raw, parsed):
     utr = parsed.get("utr")
     txn = parsed.get("transaction_id")
 
+    # store parsed email (for RECENT tab + audit)
     try:
         cur.execute(
             """INSERT OR IGNORE INTO fampay_emails
@@ -445,6 +496,7 @@ async def _process_fampay_email(mid, raw, parsed):
     if amount_f is None:
         return
 
+    # dedup / fraud check
     existing = None
     if utr:
         existing = is_utr_used_by_other_order(utr)
@@ -522,22 +574,24 @@ async def fampay_imap_poll_loop():
                 continue
             emails = await asyncio.to_thread(_imap_fetch_fampay_emails_blocking, ea, ap)
             if emails:
-                log.info(f"📬 FamPay: {len(emails)} new")
                 parser = FamPayEmailParser()
+                processed = 0
                 for mid, raw in emails:
                     try:
-                        await _process_fampay_email(
-                            mid, raw, parser.extract_details_from_raw(raw)
-                        )
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                        parsed = parser.from_raw(raw)
+                        await _process_fampay_email(mid, raw, parsed)
+                        processed += 1
+                    except Exception as e:
+                        log.warning(f"FamPay parse error mid={mid}: {e}")
+                if processed:
+                    log.info(f"📬 FamPay: checked {processed} email(s)")
+        except Exception as e:
+            log.warning(f"FamPay poll error: {e}")
         await asyncio.sleep(IMAP_POLL_INTERVAL)
 
 
 # ============================================================
-# CROSS-MODULE IMPORTS
+# CROSS-MODULE IMPORTS (project glue — required)
 # ============================================================
 from buttons import ibtn
 from config import (
