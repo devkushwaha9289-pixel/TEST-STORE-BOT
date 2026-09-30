@@ -1,1 +1,1 @@
-touch miniapp/__init__.py
+# touch miniapp/__init__.py
