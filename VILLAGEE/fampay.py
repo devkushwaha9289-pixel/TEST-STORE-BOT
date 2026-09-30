@@ -3,8 +3,7 @@
 """
 VILLAGEE SMS SHOP v28.1 — fampay.py
 FamPay email parser + Gmail IMAP polling for automatic UPI deposits.
-v28.2: parser updated for NEW FamPay email format — verification is now
-       driven ONLY by UTR / TXN extracted from the email body.
+v28.2: NEW FamPay email format — verification via UTR / TXN only.
 """
 
 import re, time, sqlite3, asyncio, imaplib, email
@@ -111,11 +110,9 @@ class FamPayEmailParser:
         raw_email = re.sub(r'\s+', ' ', plain if plain else html_clean).strip()
 
         d: Dict[str, Any] = {
-            # — core verification fields —
             "amount": None,
             "transaction_id": None,
             "utr": None,
-            # — compatibility / optional —
             "order_id": None,
             "purpose": None,
             "raw_email": raw_email,
@@ -295,7 +292,7 @@ class FamPayEmailParser:
 
 
 # ============================================================
-# FAMPAY IMAP FETCH (unchanged)
+# IMAP FETCH
 # ============================================================
 def _imap_fetch_fampay_emails_blocking(ea, ap):
     conn = None
@@ -332,17 +329,9 @@ def _imap_fetch_fampay_emails_blocking(ea, ap):
 
 
 # ============================================================
-# MATCHING — UTR / TXN / AMOUNT (order_id no longer in email)
+# MATCHING — UTR / TXN / AMOUNT
 # ============================================================
 def _find_matching_pending_order(amount, oid_email, utr):
-    """
-    New FamPay emails do NOT carry the merchant `order_id` / purpose note.
-    So matching is now:
-      1) (best-effort) exact order_id if it happens to still be present
-      2) amount match within the last 15 minutes
-      3) amount match (any age)
-    The actual verification of a real payment still relies on UTR / TXN.
-    """
     if oid_email:
         for cand in (oid_email, oid_email.strip(),
                      oid_email.strip().upper(), oid_email.strip().lower()):
@@ -375,7 +364,7 @@ def _find_matching_pending_order(amount, oid_email, utr):
 
 
 # ============================================================
-# ALERTS (unchanged)
+# ALERTS
 # ============================================================
 async def _send_mismatch_alert(uid, oid, exp, paid, utr=None, txn=None, src="auto"):
     ul = f"{emo('🔢')} <b>UTR:</b> <code>{utr or '—'}</code>\n" if utr else ""
@@ -416,7 +405,7 @@ async def _send_double_payment_alert(uid, oid, utr, txn, existing):
 
 
 # ============================================================
-# EMAIL PROCESSING (unchanged logic, new parser drives it)
+# EMAIL PROCESSING
 # ============================================================
 async def _process_fampay_email(mid, raw, parsed):
     if cur.execute("SELECT 1 FROM gmail_processed WHERE msg_id=?", (mid,)).fetchone():
@@ -456,7 +445,6 @@ async def _process_fampay_email(mid, raw, parsed):
     if amount_f is None:
         return
 
-    # Dedup / fraud check via UTR / TXN
     existing = None
     if utr:
         existing = is_utr_used_by_other_order(utr)
@@ -517,7 +505,7 @@ async def _process_fampay_email(mid, raw, parsed):
 
 
 # ============================================================
-# IMAP POLL LOOP (unchanged)
+# IMAP POLL LOOP
 # ============================================================
 async def fampay_imap_poll_loop():
     log.info(f"📧 FamPay poll @{current_bot_username()}")
