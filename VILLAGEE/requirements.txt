@@ -3,3 +3,5 @@ telethon
 aiohttp
 requests
 qrcode[pil]
+flask
+gunicorn
