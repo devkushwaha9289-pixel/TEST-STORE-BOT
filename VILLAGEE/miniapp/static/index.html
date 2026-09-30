@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>VILLAGEE SMS SHOP</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="header">
+    <div class="brand">🅱️ VILLAGEE</div>
+    <div class="balance" id="balance">₹0</div>
+  </header>
+  <div id="crumbs" class="hidden"></div>
+  <main id="main"></main>
+  <nav id="tabs">
+    <button data-tab="home" class="active"><span>🏠</span><small>Home</small></button>
+    <button data-tab="store"><span>🛒</span><small>Store</small></button>
+    <button data-tab="deposit"><span>💳</span><small>Recharge</small></button>
+    <button data-tab="profile"><span>👤</span><small>Profile</small></button>
+  </nav>
+</div>
+<div id="toast"></div>
+<div id="loader" class="hidden">⏳</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
