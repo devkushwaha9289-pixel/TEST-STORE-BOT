@@ -16,12 +16,8 @@
 #  ✅ FORCE JOIN hard-enforced on EVERY interaction
 #  ✅ Premium custom-emoji in backup/status messages
 #  ✅ v28.1: MANUAL UPI DEPOSIT FLOW
-#      - UPI ID: devkushwaha94@ibl
-#      - QR auto-generated like FamPay
-#      - User sends UTR + screenshot
-#      - Request goes to OWNER DM (not log channel)
-#      - Approve / Reject(+optional reason) / Change Amount
-#      - Change Amount uses keypad, re-shows same request
+#  ✅ v28.2: FamPay NEW email format (UTR/TXN only)
+#  ✅ v28.2: Flask health server (/ , /health , /status)
 # ============================================================
 """
 ENTRY POINT — run:  python main.py
@@ -39,15 +35,14 @@ from utils import QR_AVAILABLE
 # ============================================================
 def main():
     print("=" * 60)
-    print(f"  {STORE_HEADER} v28.1 (Manual UPI Deposit Flow)")
+    print(f"  {STORE_HEADER} v28.2 (New FamPay + Flask Health)")
     print(f"  ✅ Manual UPI → QR (same style as FamPay auto)")
     print(f"  ✅ User sends UTR + screenshot")
     print(f"  ✅ Request → OWNER DM (not log channel)")
-    print(f"  ✅ Approve / Reject (optional reason) / Change Amount")
-    print(f"  ✅ Change Amount uses keypad, re-shows same request")
-    print(f"  ✅ UPI MANUAL ID: devkushwaha94@ibl (default)")
+    print(f"  ✅ Approve / Reject / Change Amount")
+    print(f"  ✅ FamPay parser: NEW format (UTR/TXN only)")
+    print(f"  ✅ Flask health: / , /health , /status , /ping")
     print(f"  ✅ FORCE JOIN hard-enforced everywhere")
-    print(f"  ✅ Premium custom emoji in backups")
     print(f"  Master Owner: {MASTER_OWNER_ID}")
     print(f"  Master Bot Token: {'SET' if BOT_TOKEN else 'NOT SET'}")
     print(f"  Order Prefix: {ORDER_PREFIX}")
@@ -55,10 +50,24 @@ def main():
     print(f"  TZ: IST (UTC+5:30)")
     print(f"  Config: {BOTS_CONFIG_FILE}")
     print("=" * 60)
-    if not QR_AVAILABLE: print("⚠️  pip install qrcode[pil]")
-    if not os.path.exists("bots"): os.makedirs("bots", exist_ok=True)
-    try: asyncio.run(run_multi_bot())
-    except KeyboardInterrupt: print("\nShutting down...")
+    if not QR_AVAILABLE:
+        print("⚠️  pip install qrcode[pil]")
+    if not os.path.exists("bots"):
+        os.makedirs("bots", exist_ok=True)
+
+    # ─── Start Flask health server (Render / VPS) ───
+    try:
+        from health_server import start_health_server_thread, DEFAULT_PORT
+        start_health_server_thread()
+        print(f"🌐 Health server → http://0.0.0.0:{DEFAULT_PORT}/")
+    except Exception as e:
+        print(f"⚠️  Health server failed: {e}")
+
+    try:
+        asyncio.run(run_multi_bot())
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+
 
 if __name__ == "__main__":
     main()
