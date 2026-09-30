@@ -656,6 +656,45 @@ async def _send_duplicate_alert(uid, oid, dup_info, parsed):
     )
 
 
+# ⭐ NEW — Used by payments.py (handle_upi_check / handle_utr_text_input)
+async def _send_double_payment_alert(uid, oid, utr=None, txn=None, existing_oid=None):
+    """
+    Alert user + owner when UTR/TXN already used in another order.
+    Called from payments.py when a duplicate is detected during manual UTR check.
+    """
+    msg = (f"<b>{emo('🚫')} DUPLICATE PAYMENT — AUTO REJECTED</b>\n\n"
+           f"{emo('🆔')} <b>Your Order:</b> <code>{oid}</code>\n"
+           f"{emo('🔢')} <b>UTR:</b> <code>{utr or '—'}</code>\n"
+           f"{emo('🆔')} <b>TXN:</b> <code>{txn or '—'}</code>\n\n"
+           f"⚠️ <b>Reason:</b> UTR / TXN पहले किसी और order में use हो चुका है\n"
+           f"♻️ <b>Already used in:</b> <code>{existing_oid or '—'}</code>\n\n"
+           f"<b>{emo('🚫')} Payment NOT credited</b>\n\n"
+           f"<b>{emo('👉')} Contact:</b> {get_contact_1()}")
+    kb = InlineKeyboardMarkup([
+        [ibtn("CONTACT OWNER", url=get_support_url(), emoji="📞", style="success")],
+        [ibtn("HOME", "home", emoji="🏠", style="primary")]])
+    try:
+        await _tg_post("sendMessage", {"chat_id": uid, "text": msg,
+            "parse_mode": "HTML", "reply_markup": kb.to_dict()})
+    except Exception:
+        pass
+
+    blocks = [make_heading("🚫 DUPLICATE — AUTO REJECTED", 2),
+              make_table([["ℹ️ INFO", "📋 DETAIL"],
+                          ["🆔 New Order", str(oid)],
+                          ["👤 User", str(uid)],
+                          ["🔢 UTR", str(utr or "—")],
+                          ["🆔 TXN", str(txn or "—")],
+                          ["♻️ Already In", str(existing_oid or "—")]])]
+    try:
+        await _send_to_owner_and_logs(
+            blocks,
+            f"🚫 Duplicate: Order {oid} → already in {existing_oid}"
+        )
+    except Exception as e:
+        log.warning(f"_send_double_payment_alert logs: {e}")
+
+
 # ============================================================
 # PROCESS EMAIL
 # ============================================================
