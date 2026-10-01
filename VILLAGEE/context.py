@@ -102,7 +102,22 @@ class BotContext:
     async def start(self):
         if self.started: return
         app = build_app_for_ctx(self); self.app = app
-        await app.initialize(); await app.start()
+        await app.initialize()
+
+        # =====================================================
+        # AUTO MINI APP MENU BUTTON
+        # Same effect as:
+        # setChatMenuButton -> web_app -> https://test-store-bot-1.onrender.com
+        # Applied automatically to every configured bot on startup.
+        # =====================================================
+        try:
+            from miniapp_integration import set_menu_button
+            await set_menu_button(app, self.username)
+            log.info(f"🛍️ Mini App menu button set @{self.username}")
+        except Exception as e:
+            log.warning(f"⚠️ Mini App menu button @{self.username}: {e}")
+
+        await app.start()
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         self.started = True
 
