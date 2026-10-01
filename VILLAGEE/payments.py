@@ -330,9 +330,29 @@ async def process_referral_bonus(uid, amt):
         if pct > 0:
             bonus = int(amt * (pct / 100))
             if bonus > 0:
+                # Keep a dedicated referral ledger so the Mini App can show
+                # referral history separately from purchase/wallet history.
+                before_row = cur.execute("SELECT balance FROM users WHERE user_id=?", (ref,)).fetchone()
+                old_balance = int(before_row[0] or 0) if before_row else 0
                 update_balance(ref, bonus)
+                after_row = cur.execute("SELECT balance FROM users WHERE user_id=?", (ref,)).fetchone()
+                new_balance = int(after_row[0] or 0) if after_row else old_balance + bonus
                 cur.execute("UPDATE users SET referral_earnings=referral_earnings+? WHERE user_id=?",
-                            (bonus, ref)); db.commit()
+                            (bonus, ref))
+                cur.execute("""INSERT INTO referral_history
+                    (referrer_id, referred_user_id, bonus_amount, deposit_amount, percent, event_type)
+                    VALUES (?,?,?,?,?,?)""",
+                    (ref, uid, bonus, int(amt), pct, 'bonus'))
+                try:
+                    cur.execute("""INSERT INTO balance_history
+                        (user_id, amount, action, source, note, old_balance, new_balance)
+                        VALUES (?,?,?,?,?,?,?)""",
+                        (ref, bonus, 'REFERRAL BONUS', 'referral',
+                         f'Referral bonus from user {uid} on ₹{int(amt)} deposit',
+                         old_balance, new_balance))
+                except Exception:
+                    pass
+                db.commit()
                 await log_referral_bonus(ref, uid, bonus, amt)
 
 
