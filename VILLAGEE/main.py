@@ -33,7 +33,7 @@ log = logging.getLogger("villagee.main")
 # ============================================================
 PORT       = int(os.getenv("PORT", "8000"))
 HOST       = os.getenv("HOST", "0.0.0.0")
-PUBLIC_URL = os.getenv("MINIAPP_URL", "https://test-store-bot-1.onrender.com").rstrip("/")
+PUBLIC_URL = os.getenv("MINIAPP_URL", "").rstrip("/")
 
 # Make sure miniapp_integration sees it
 if PUBLIC_URL:
