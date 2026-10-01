@@ -307,6 +307,68 @@ async def reshow_manual_upi_request(oid):
                                   fallback_text=fb, show_placeholder=False)
         except: pass
 
+async def submit_manual_upi_from_miniapp(uid, oid, utr):
+    """Submit a Mini App manual-UPI UTR into the normal owner approval flow."""
+    row = cur.execute(
+        "SELECT user_id, amount, status, utr FROM manual_upi_orders WHERE order_id=?",
+        (oid,),
+    ).fetchone()
+    if not row:
+        raise RuntimeError("Manual payment order not found")
+    if int(row["user_id"]) != int(uid):
+        raise RuntimeError("Payment order does not belong to this user")
+    if row["status"] == "approved":
+        return {"ok": True, "status": "approved"}
+    if row["status"] == "rejected":
+        raise RuntimeError("Payment was rejected")
+
+    clean = re.sub(r'[^A-Za-z0-9]', '', str(utr or '')).upper()
+    if len(clean) < 4:
+        raise RuntimeError("UTR too short")
+
+    cur.execute("UPDATE manual_upi_orders SET utr=?, status='submitted' WHERE order_id=?",
+                (clean, oid))
+    cur.execute("UPDATE upi_orders SET utr=?, status='manual_pending' WHERE order_id=?",
+                (clean, oid))
+    db.commit()
+
+    r = cur.execute(
+        "SELECT first_name, last_name, username FROM users WHERE user_id=?",
+        (uid,),
+    ).fetchone()
+    nm = _full_name(r["first_name"] if r else "—", r["last_name"] if r else "")
+    un = f"@{r['username']}" if r and r["username"] else "—"
+    amount = int(row["amount"])
+    owner_id = current_owner_id()
+    rows = [
+        ["ℹ️ INFO", "📋 DETAIL"],
+        ["👤 Name", nm], ["🆔 User", str(uid)], ["🔗 Username", un],
+        ["💰 Amount", f"₹{amount}"], ["🆔 Order", oid], ["🔢 UTR", clean],
+        ["📅 Time", _now_str()],
+    ]
+    blocks = [make_heading("🔔 NEW MANUAL UPI PAYMENT", 2), make_table(rows)]
+    fb = f"🔔 NEW MANUAL UPI\n👤 {nm} ({uid})\n💰 ₹{amount}\n🆔 {oid}\n🔢 {clean}"
+    kb = InlineKeyboardMarkup([
+        [ibtn("✅ APPROVE", f"manup_approve|{oid}", emoji="✅", style="success")],
+        [ibtn("❌ REJECT", f"manup_reject|{oid}", emoji="❌", style="danger"),
+         ibtn("💰 CHANGE AMOUNT", f"manup_amount|{oid}", emoji="💰", style="primary")],
+    ])
+    await send_rich_async(owner_id, blocks, reply_markup=kb.to_dict(),
+                          fallback_text=fb, show_placeholder=False)
+    try:
+        await _tg_post("sendMessage", {
+            "chat_id": uid, "parse_mode": "HTML",
+            "text": (f"<b>{emo('✅')} Payment Submitted!</b>\n\n"
+                      f"🆔 Order: <code>{escape(oid)}</code>\n"
+                      f"💰 Amount: ₹{amount}\n"
+                      f"🔢 UTR: <code>{escape(clean)}</code>\n\n"
+                      f"⏳ Waiting for admin approval."),
+        })
+    except Exception:
+        pass
+    return {"ok": True, "status": "manual_pending"}
+
+
 async def handle_manual_upi_owner_text(update, context):
     """Owner sends reason text after tapping Reject."""
     msg = update.message; uid = update.effective_user.id
