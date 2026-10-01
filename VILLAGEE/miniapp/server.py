@@ -6,7 +6,7 @@ Serves the Mini App + REST APIs + Health endpoints.
 Validates Telegram WebApp initData.
 Reads the same SQLite DB used by the bot.
 """
-import os, sys, json, hmac, hashlib, sqlite3, time, secrets, string, asyncio
+import os, sys, json, hmac, hashlib, sqlite3, time, secrets, string, asyncio, re
 from urllib.parse import parse_qsl, quote
 from datetime import timedelta, timezone
 from typing import Optional
@@ -443,28 +443,53 @@ async def api_purchase_file(req: FilePurchaseReq, a=Depends(auth)):
 
 class PaymentVerifyReq(BaseModel):
     order_id: str
+    reference: Optional[str] = None
+    # Backward-compatible fields; server still applies the 12-digit rule.
     utr: Optional[str] = None
     txn: Optional[str] = None
 
 
-async def _complete_miniapp_upi_order(order_id, uid, amount, utr=None, txn=None):
-    """Use the bot's canonical UPI completion path for Mini App verification."""
-    from payments import complete_upi_order
-    return await complete_upi_order(
-        order_id, uid, amount, None, "miniapp_utr", utr=utr, txn=txn
-    )
-
 @app.post("/api/verify-payment")
 async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
+    """Verify the submitted UTR/TXN against the exact pending order amount.
+
+    Flow:
+      1) order_id -> DB -> owner + exact amount
+      2) reference -> 12 numeric digits = UTR, otherwise TXN
+      3) Gmail/App Password -> current bot DB settings
+      4) Vercel verification API -> FamPay email
+      5) exact amount check -> credit only on success
+    """
     uid = a["user"]["id"]
-    utr = (req.utr or "").strip().upper()
-    txn = (req.txn or "").strip().upper()
-    if not utr and not txn:
+    raw_ref = req.reference or req.utr or req.txn or ""
+    reference = "".join(str(raw_ref).strip().upper().split())
+    if not reference:
         raise HTTPException(400, "Enter UTR or Transaction ID")
+
+    # One input is authoritative. If old clients send both fields, reject it
+    # instead of silently choosing one.
+    if req.utr and req.txn:
+        raise HTTPException(400, "Enter only UTR or Transaction ID")
+
+    # Strip common labels users may paste.
+    reference = re.sub(
+        r"^(?:UTR|TXN|TRANSACTIONID|TRANSACTION_ID|TRANSACTION)[:\-\s]*",
+        "", reference,
+    )
+    reference = re.sub(r"[^A-Z0-9]", "", reference)
+    if not reference:
+        raise HTTPException(400, "Enter UTR or Transaction ID")
+
+    is_utr = bool(re.fullmatch(r"\d{12}", reference))
+    ref_type = "UTR" if is_utr else "TXN"
+    if not is_utr and len(reference) < 6:
+        raise HTTPException(400, "Invalid Transaction ID")
+
     con = open_db(a["un"])
     if not con:
         raise HTTPException(500, "DB missing")
     try:
+        # IMPORTANT: amount is taken from DB by order_id, never from the client.
         order = con.execute(
             "SELECT order_id, user_id, amount, status FROM upi_orders WHERE order_id=? AND user_id=?",
             (req.order_id, uid),
@@ -473,108 +498,128 @@ async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
             raise HTTPException(404, "Payment order not found")
         if order["status"] == "success":
             return {"verified": True, "status": "success", "message": "Already credited"}
-        if order["status"] in ("expired", "failed", "mismatch", "duplicate"):
+        if order["status"] in ("failed", "mismatch", "duplicate"):
             raise HTTPException(400, f"Order is {order['status']}")
 
-        # Manual UPI orders are approved by the Telegram admin workflow.
-        # The Mini App can submit the UTR here, after which the same owner
-        # approval buttons used by the Telegram bot are sent to the owner.
-        manual = con.execute(
-            "SELECT order_id, amount, status FROM manual_upi_orders WHERE order_id=? AND user_id=?",
-            (req.order_id, uid),
-        ).fetchone()
-        if manual:
-            if manual["status"] == "approved":
-                return {"verified": True, "status": "success", "message": "Already credited"}
-            if manual["status"] in ("rejected", "expired"):
-                raise HTTPException(400, f"Order is {manual['status']}")
-            con.execute("UPDATE manual_upi_orders SET utr=?, status='submitted' WHERE order_id=?",
-                        (utr or txn, req.order_id))
-            con.execute("UPDATE upi_orders SET utr=?, status='manual_pending' WHERE order_id=?",
-                        (utr or txn, req.order_id))
-            con.commit()
-            try:
-                from manual_upi import submit_manual_upi_from_miniapp
-                await run_in_bot_context(
-                    a["un"],
-                    lambda: submit_manual_upi_from_miniapp(uid, req.order_id, utr or txn),
-                )
-            except Exception as e:
-                raise HTTPException(400, str(e))
-            return {
-                "verified": False, "status": "manual_pending",
-                "message": "UTR submitted. Waiting for admin approval.",
-            }
-
-        # Find the bank/FamPay record by UTR, TXN or order id.
-        conditions = []
-        params = []
-        if utr:
-            conditions.append("UPPER(COALESCE(utr,''))=?")
-            params.append(utr)
-        if txn:
-            conditions.append("UPPER(COALESCE(txn_id,''))=?")
-            params.append(txn)
-        where = " OR ".join(conditions)
-        match = con.execute(
-            f"SELECT msg_id, amount, utr, txn_id, order_id FROM fampay_emails WHERE {where} ORDER BY received_ts DESC LIMIT 1",
-            params,
-        ).fetchone()
-        if not match:
-            return {"verified": False, "status": "not_found", "message": "UTR/TXN not found yet. Wait and try again."}
-
-        # Reject reuse of an already successful UTR/TXN.
-        dup = None
-        if match["utr"]:
-            dup = con.execute("SELECT order_id FROM upi_orders WHERE UPPER(COALESCE(utr,''))=UPPER(?) AND status='success' AND order_id!=? LIMIT 1", (match["utr"], req.order_id)).fetchone()
-        if not dup and match["txn_id"]:
-            dup = con.execute("SELECT order_id FROM upi_orders WHERE UPPER(COALESCE(txn_id,''))=UPPER(?) AND status='success' AND order_id!=? LIMIT 1", (match["txn_id"], req.order_id)).fetchone()
-        if dup:
-            con.execute("UPDATE upi_orders SET status='duplicate', utr=?, txn_id=? WHERE order_id=?", (match["utr"], match["txn_id"], req.order_id))
-            con.commit()
-            return {"verified": False, "status": "duplicate", "message": "This payment reference was already used."}
-
-        try:
-            paid = float(match["amount"])
-        except Exception:
-            paid = 0.0
         expected = float(order["amount"])
-        if abs(paid - expected) > 0.01:
-            con.execute("UPDATE upi_orders SET status='mismatch', paid_amount=?, utr=?, txn_id=?, verified_via='miniapp_utr' WHERE order_id=?",
-                        (paid, match["utr"], match["txn_id"], req.order_id))
-            con.commit()
-            return {"verified": False, "status": "mismatch", "expected": expected, "paid": paid,
-                    "message": f"Amount mismatch. Expected ₹{int(expected)}, found ₹{paid:g}."}
-
-        # Mark the exact bank/FamPay email as consumed, then let the same
-        # bot-side completion function perform the credit.  This keeps Mini
-        # App and Telegram Bot verification identical (balance, history,
-        # referral bonus, duplicate protection, notifications, etc.).
-        con.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?",
-                    (req.order_id, match["msg_id"]))
-        con.commit()
 
         try:
+            from external_fampay import verify_fampay_reference_async
             result = await run_in_bot_context(
                 a["un"],
-                lambda: _complete_miniapp_upi_order(
-                    req.order_id, uid, int(expected), match["utr"], match["txn_id"]
-                ),
+                lambda: verify_fampay_reference_async(reference, expected, req.order_id),
             )
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(400, str(e))
+        except Exception as exc:
+            raise HTTPException(502, f"FamPay verification service error: {exc}")
 
-        if not result:
-            return {"verified": False, "status": "already_processed",
-                    "message": "Payment was already processed or is no longer pending."}
+        if not result.get("success"):
+            return {
+                "verified": False,
+                "status": result.get("status") or "api_error",
+                "reference_type": ref_type,
+                "message": result.get("message") or "Verification failed.",
+            }
 
-        return {"verified": True, "status": "success", "amount": int(expected),
-                "message": f"₹{int(expected)} credited successfully."}
+        if not result.get("verified"):
+            data = result.get("data") or {}
+            received = data.get("received_amount") or data.get("amount")
+            is_mismatch = str(result.get("message") or "").lower() == "amount mismatch"
+            return {
+                "verified": False,
+                "status": "mismatch" if is_mismatch else "not_found",
+                "reference_type": ref_type,
+                "expected": expected,
+                "paid": received,
+                "data": data,
+                "message": result.get("message") or "Payment not verified.",
+            }
+
+        data = result.get("data") or {}
+        try:
+            paid = float(data.get("amount"))
+        except Exception:
+            paid = None
+        if paid is None:
+            return {
+                "verified": False,
+                "status": "api_error",
+                "reference_type": ref_type,
+                "message": "Verification API did not return a payment amount. Not credited.",
+            }
+
+        # Exact amount check AGAIN locally.
+        if abs(paid - expected) > 0.01:
+            utr_v = (data.get("utr") or (reference if is_utr else "")).strip().upper() or None
+            txn_v = (data.get("transaction_id") or (reference if not is_utr else "")).strip().upper() or None
+            con.execute(
+                "UPDATE upi_orders SET status='mismatch', paid_amount=?, utr=?, txn_id=?, verified_via='fampay_api' WHERE order_id=?",
+                (paid, utr_v, txn_v, req.order_id),
+            )
+            con.commit()
+            return {
+                "verified": False,
+                "status": "mismatch",
+                "reference_type": ref_type,
+                "expected": expected,
+                "paid": paid,
+                "data": data,
+                "message": f"Amount mismatch. Expected ₹{expected:g}, found ₹{paid:g}.",
+            }
+
+        utr_v = (data.get("utr") or (reference if is_utr else "")).strip().upper() or None
+        txn_v = (data.get("transaction_id") or (reference if not is_utr else "")).strip().upper() or None
+
+        # Duplicate reference protection.
+        dup = None
+        if utr_v:
+            dup = con.execute(
+                "SELECT order_id FROM upi_orders WHERE UPPER(COALESCE(utr,''))=UPPER(?) AND status='success' AND order_id!=? LIMIT 1",
+                (utr_v, req.order_id),
+            ).fetchone()
+        if not dup and txn_v:
+            dup = con.execute(
+                "SELECT order_id FROM upi_orders WHERE UPPER(COALESCE(txn_id,''))=UPPER(?) AND status='success' AND order_id!=? LIMIT 1",
+                (txn_v, req.order_id),
+            ).fetchone()
+        if dup:
+            con.execute(
+                "UPDATE upi_orders SET status='duplicate', utr=?, txn_id=? WHERE order_id=?",
+                (utr_v, txn_v, req.order_id),
+            )
+            con.commit()
+            return {
+                "verified": False,
+                "status": "duplicate",
+                "reference_type": ref_type,
+                "message": "This payment reference was already used.",
+            }
+
+        from payments import complete_upi_order
+        ok = await run_in_bot_context(
+            a["un"],
+            lambda: complete_upi_order(
+                req.order_id, uid, int(expected), None, "fampay_api", utr=utr_v, txn=txn_v
+            ),
+        )
+        if not ok:
+            return {
+                "verified": False,
+                "status": "already_processed",
+                "reference_type": ref_type,
+                "message": "Payment was already processed or is no longer pending.",
+            }
+
+        return {
+            "verified": True,
+            "status": "success",
+            "reference_type": ref_type,
+            "amount": int(expected),
+            "order_id": req.order_id,
+            "data": data,
+            "message": f"₹{int(expected)} credited successfully.",
+        }
     finally:
         con.close()
-
 
 # ============================================================
 # DEPOSITS
