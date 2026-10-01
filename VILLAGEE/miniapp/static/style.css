@@ -209,6 +209,58 @@ main{padding:16px}
 .upi-id{margin:11px 0;padding:10px;border-radius:10px;background:#f5f8fb;color:#596673;font-size:12px}
 .note{margin-top:9px;color:var(--muted);font-size:11px;line-height:1.45}
 
+
+/* Rainbow QR / payment theme */
+.rainbow-pay-card{position:relative;overflow:hidden}
+.rainbow-pay-card:before{
+  content:"";position:absolute;inset:-1px;border-radius:21px;padding:1.5px;
+  background:conic-gradient(from 0deg,#ff1680,#ff8a00,#ffd400,#19b96b,#00bde8,#7657ff,#ff1680);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  animation:rainbowSpin 5s linear infinite;pointer-events:none
+}
+.rainbow-pay-card>*{position:relative;z-index:1}
+.pay-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  padding:6px 10px;border-radius:999px;background:#f4f8fc;
+  border:1px solid #e2eaf1;color:#5f7180;font-size:9px;font-weight:900;letter-spacing:1.2px
+}
+.pay-subtitle{margin:-4px 0 13px;color:#8794a0;font-size:11px}
+.qr-frame{
+  width:min(285px,82vw);aspect-ratio:1;margin:4px auto 12px;padding:5px;
+  border-radius:20px;position:relative;
+  background:conic-gradient(from 0deg,#ff1680,#ff8a00,#ffd400,#19b96b,#00bde8,#7657ff,#ff1680);
+  box-shadow:0 10px 30px rgba(60,90,120,.12),0 0 24px rgba(0,189,232,.10);
+  animation:rainbowSpin 5s linear infinite
+}
+.qr-frame:before{
+  content:"";position:absolute;inset:0;border-radius:20px;
+  background:conic-gradient(from 180deg,#ff1680,#ff8a00,#ffd400,#19b96b,#00bde8,#7657ff,#ff1680);
+  filter:blur(9px);opacity:.20;z-index:-1
+}
+.qr-frame-inner{width:100%;height:100%;padding:8px;border-radius:16px;background:#fff}
+.qr{display:block;width:100%;height:100%;padding:0;border:0;border-radius:10px;background:#fff;object-fit:contain}
+@keyframes rainbowSpin{to{filter:hue-rotate(360deg)}}
+.payment-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.payment-meta>div{padding:9px;border:1px solid #e6edf3;border-radius:11px;background:#f8fafc;text-align:left;min-width:0}
+.payment-meta span{display:block;color:#8b98a4;font-size:9px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px}
+.payment-meta b,.payment-meta code{display:block;color:#34424f;font-size:11px;font-weight:800;word-break:break-all}
+.verify-box{margin-top:12px;padding:13px;border:1px solid #e1eaf1;border-radius:15px;background:linear-gradient(180deg,#fbfdff,#f7fafc);text-align:left}
+.verify-title{font-size:13px;font-weight:900;color:#263541}
+.verify-hint{font-size:10px;color:#85929e;line-height:1.4;margin:3px 0 9px}
+.verify-input{display:block;width:100%;height:44px;margin:7px 0;padding:0 12px;border:1px solid #dfe7ee;border-radius:11px;background:#fff;color:#25333f;outline:0;font-size:13px;font-weight:650}
+.verify-input:focus{border-color:#78c5e4;box-shadow:0 0 0 4px rgba(34,158,217,.08)}
+.verify-input::placeholder{color:#a0abb5}
+.verify-box .btn{margin-top:8px}
+.verify-box .btn:disabled{opacity:.55;transform:none}
+.payment-status{margin-top:9px;min-height:25px;display:flex;align-items:center;justify-content:center;gap:7px;border-radius:9px;padding:7px;font-size:10px;font-weight:750}
+.payment-status.waiting{background:#fff9e9;color:#9b7600}
+.payment-status.success{background:#eaf9f2;color:#168258}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#e0a900;animation:pulsePay 1.2s infinite}
+@keyframes pulsePay{50%{opacity:.35;transform:scale(.7)}}
+.success-icon{width:48px;height:48px;margin:0 auto 9px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:#eaf9f2;color:#15935b;font-size:28px;font-weight:900}
+.purchase-success-card{text-align:center}
+
 .profile{
   padding:21px;background:#fff;border:1px solid var(--border);
   border-radius:20px;text-align:center;box-shadow:var(--shadow-sm)
