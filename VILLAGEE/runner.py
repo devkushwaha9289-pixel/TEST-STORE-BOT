@@ -31,18 +31,15 @@ async def _post_init_for(app, ctx):
         except Exception as e:
             log.error(f"Telethon @{ctx.username}: {e}")
 
-        asyncio.create_task(fampay_imap_poll_loop())
         asyncio.create_task(cache_lzt_stock_loop())
 
         # ⭐ Mini App — set bot menu button (opens WebApp)
         try:
-            ok = await set_menu_button(app, ctx.username)
-            if ok:
-                log.info(f"✅ Mini App menu + commands set @{ctx.username}")
-            else:
-                log.error(f"❌ Mini App menu setup failed @{ctx.username}")
+            await set_bot_commands(app)
+            await set_menu_button(app, ctx.username)
+            log.info(f"✅ Mini App menu + /commands set @{ctx.username}")
         except Exception as e:
-            log.exception(f"Mini App menu @{ctx.username}: {e}")
+            log.warning(f"Mini App menu @{ctx.username}: {e}")
 
         log.info(f"✅ Loops @{ctx.username}")
     finally:
@@ -131,8 +128,7 @@ from context import (
     BOTS_BY_TOKEN, BOTS_BY_USERNAME, BOT_CONTEXTS, BotContext, MASTER_OWNER_ID,
     _current_bot, fetch_bot_username, load_bots_config, save_bots_config
 )
-from fampay import fampay_imap_poll_loop
 from lzt_api import cache_lzt_stock_loop
-from miniapp_integration import cmd_app, set_menu_button   # ⭐ Mini App
+from miniapp_integration import cmd_app, set_bot_commands, set_menu_button   # ⭐ Mini App
 from text_handlers import on_error, on_photo, on_text, on_video
 from zip_upload import handle_document
