@@ -28,7 +28,7 @@ def keypad_kb(prefix="kp_"):
          ibtn("✅", f"{prefix}done", emoji="✅", style="success")],
         [ibtn("CANCEL", "cancel", emoji="🚫", style="danger")]])
 
-async def complete_upi_order(oid, uid, amount, qr_msg_id=None, source="fampay_imap", utr=None, txn=None):
+async def complete_upi_order(oid, uid, amount, qr_msg_id=None, source="fampay_api", utr=None, txn=None):
     if utr and is_utr_used_by_other_order(utr, oid): return False
     if txn and is_txn_used_by_other_order(txn, oid): return False
     async with get_user_lock(uid):
@@ -128,76 +128,56 @@ async def upi_order_watchdog(oid, uid, qr_msg_id):
         except: pass
 
 async def handle_upi_check(update, context):
-    q = update.callback_query; data = q.data; uid = update.effective_user.id
-    oid = data.replace("check_upi_", "")
-    row = cur.execute("SELECT amount, status FROM upi_orders WHERE order_id=?", (oid,)).fetchone()
-    if not row:
-        try: await q.answer("Not found", show_alert=True)
-        except: pass
+    """CHECK NOW never reads local FamPay/IMAP data.
+    It simply opens the UTR/TXN verification flow.
+    """
+    q = update.callback_query; uid = update.effective_user.id
+    oid = q.data.replace("check_upi_", "", 1)
+    row = cur.execute("SELECT amount, status, user_id FROM upi_orders WHERE order_id=?", (oid,)).fetchone()
+    if not row or str(row["user_id"]) != str(uid):
+        try: await q.answer("Order not found", show_alert=True)
+        except Exception: pass
         return
     if row["status"] == "success":
-        try: await q.answer("Credited!", show_alert=True)
-        except: pass
+        try: await q.answer("Already credited", show_alert=True)
+        except Exception: pass
         return
-    if row["status"] in ("expired","failed","mismatch","duplicate"):
-        try: await q.answer("No longer valid.", show_alert=True)
-        except: pass
+    if row["status"] in ("failed", "mismatch", "duplicate"):
+        try: await q.answer("This order cannot be verified again.", show_alert=True)
+        except Exception: pass
         return
-    exp = float(row["amount"]); cutoff = time.time() - 900
-    match = cur.execute("""SELECT msg_id, amount, utr, txn_id FROM fampay_emails
-        WHERE ABS(amount - ?) < 0.01 AND received_ts > ? AND (matched_order_id IS NULL OR matched_order_id='')
-        ORDER BY received_ts DESC LIMIT 1""", (exp, cutoff)).fetchone()
-    if match:
-        paid = float(match["amount"]); utr = match["utr"]; txn = match["txn_id"]
-        existing = None
-        if utr: existing = is_utr_used_by_other_order(utr, oid)
-        if not existing and txn: existing = is_txn_used_by_other_order(txn, oid)
-        if existing:
-            cur.execute("UPDATE upi_orders SET status='duplicate' WHERE order_id=?", (oid,)); db.commit()
-            await _send_double_payment_alert(uid, oid, utr, txn, existing)
-            try: await q.answer("🚫 Duplicate!", show_alert=True)
-            except: pass
-            return
-        if abs(paid - exp) > 0.01:
-            cur.execute("""UPDATE upi_orders SET status='mismatch', paid_amount=?, utr=?, txn_id=?
-                WHERE order_id=?""", (paid, utr, txn, oid)); db.commit()
-            try:
-                cur.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?", (oid, match["msg_id"])); db.commit()
-            except: pass
-            await _send_mismatch_alert(uid, oid, exp, paid, utr, txn, "manual_check")
-            try: await q.answer("⚠️ Mismatch!", show_alert=True)
-            except: pass
-            return
-        try:
-            cur.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?", (oid, match["msg_id"])); db.commit()
-        except: pass
-        await complete_upi_order(oid, uid, int(exp), None, "fampay_manual_check", utr=utr, txn=txn)
-        try: await q.answer("✅ Verified!", show_alert=True)
-        except: pass
-        return
-    try: await q.answer("⏳ No matching email yet. Wait 30-60s.", show_alert=True)
-    except: pass
+    try: await q.answer()
+    except Exception: pass
+    await handle_utr_enter(update, context)
+
 
 async def handle_utr_enter(update, context):
     q = update.callback_query; data = q.data; uid = update.effective_user.id
     oid = data.split("|", 1)[1]
-    row = cur.execute("SELECT amount, status FROM upi_orders WHERE order_id=?", (oid,)).fetchone()
-    if not row:
-        try: await q.answer("Not found", show_alert=True)
-        except: pass
+    row = cur.execute(
+        "SELECT amount, status, user_id FROM upi_orders WHERE order_id=?", (oid,)
+    ).fetchone()
+    if not row or str(row["user_id"]) != str(uid):
+        try: await q.answer("Order not found", show_alert=True)
+        except Exception: pass
         return
     if row["status"] == "success":
         try: await q.answer("Credited!", show_alert=True)
-        except: pass
+        except Exception: pass
         return
-    waiting_utr[uid] = {'order_id': oid, 'amount': float(row["amount"])}
+    waiting_utr[uid] = {"order_id": oid}
     try: await q.answer()
-    except: pass
+    except Exception: pass
     await q.message.reply_text(
-        f"<b>{emo('🔢')} ENTER UTR / TXN</b>\n\n{emo('💰')} Amount: ₹{int(row['amount'])}\n"
-        f"{emo('🆔')} Order: <code>{oid}</code>\n\n{emo('📝')} Send UTR:",
+        f"<b>{emo('🔢')} ENTER UTR / TXN</b>\n\n"
+        f"{emo('💰')} Amount: ₹{int(float(row['amount']))}\n"
+        f"{emo('🆔')} Order: <code>{escape(oid)}</code>\n\n"
+        f"Send <b>12-digit numeric UTR</b> OR <b>Transaction ID (TXN)</b>.\n"
+        f"Example UTR: <code>878258799122</code>\n"
+        f"Example TXN: <code>FMPIB6703774432</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[ibtn("CANCEL", "cancel", emoji="🚫", style="danger")]]))
+
 
 async def handle_utr_text_input(update, context):
     msg = update.message; uid = update.effective_user.id
@@ -206,58 +186,125 @@ async def handle_utr_text_input(update, context):
         waiting_utr.pop(uid, None)
         await msg.reply_text(f"{emo('❌')} Cancelled.", parse_mode="HTML",
                              reply_markup=main_reply_kb(uid)); return
+
     info = waiting_utr.get(uid)
-    if not info: return
-    oid = info['order_id']; exp = info['amount']
-    clean = re.sub(r'[^\w]', '', text).strip().upper()
-    if len(clean) < 4:
-        await msg.reply_text(f"{emo('⚠️')} UTR too short.", parse_mode="HTML"); return
-    await msg.reply_text(f"{emo('🔍')} Searching <code>{escape(clean)}</code>...", parse_mode="HTML")
-    row = cur.execute("""SELECT msg_id, amount, utr, txn_id, order_id FROM fampay_emails
-        WHERE UPPER(utr)=? OR UPPER(txn_id)=? OR UPPER(order_id)=? LIMIT 1""",
-        (clean, clean, clean)).fetchone()
-    if not row:
-        row = cur.execute("""SELECT msg_id, amount, utr, txn_id, order_id FROM fampay_emails
-            WHERE raw_summary LIKE ? ORDER BY received_ts DESC LIMIT 1""", (f"%{clean}%",)).fetchone()
-    if not row:
-        await msg.reply_text(
-            f"{emo('❌')} <b>Not found.</b>\n\n• Verify UTR/TXN\n• Wait 30-60s\n"
-            f"• Bot checks every {IMAP_POLL_INTERVAL}s",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [ibtn("RETRY", f"utr_enter|{oid}", emoji="🔄", style="primary")],
-                [ibtn("HOME","home",emoji="🏠",style="primary")]]))
+    if not info:
         return
-    try: ea = float(row["amount"]) if row["amount"] else None
-    except: ea = None
-    utr_v = row["utr"]; txn_v = row["txn_id"]
+    oid = info["order_id"]
+
+    # IMPORTANT: amount/user/status always come from this order in DB.
+    row = cur.execute(
+        "SELECT amount, status, user_id FROM upi_orders WHERE order_id=?", (oid,)
+    ).fetchone()
+    if not row or str(row["user_id"]) != str(uid):
+        waiting_utr.pop(uid, None)
+        await msg.reply_text(f"{emo('❌')} Payment order not found.", parse_mode="HTML",
+                             reply_markup=main_reply_kb(uid)); return
+    if row["status"] == "success":
+        waiting_utr.pop(uid, None)
+        await msg.reply_text(f"{emo('✅')} This order is already credited.", parse_mode="HTML",
+                             reply_markup=main_reply_kb(uid)); return
+    if row["status"] in ("failed", "mismatch", "duplicate"):
+        waiting_utr.pop(uid, None)
+        await msg.reply_text(f"{emo('⚠️')} Order status: <b>{escape(str(row['status']))}</b>",
+                             parse_mode="HTML", reply_markup=main_reply_kb(uid)); return
+
+    expected = float(row["amount"])
+    raw = text.strip()
+    # Classification requested by the shop:
+    # exactly 12 numeric digits => UTR; anything else => TXN.
+    clean = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    if not clean:
+        await msg.reply_text(f"{emo('⚠️')} Enter UTR or Transaction ID.", parse_mode="HTML"); return
+    if re.fullmatch(r"\d{12}", clean):
+        reference_type = "UTR"
+    else:
+        reference_type = "TXN"
+        if len(clean) < 6:
+            await msg.reply_text(f"{emo('⚠️')} Invalid Transaction ID.", parse_mode="HTML"); return
+
+    await msg.reply_text(
+        f"{emo('🔍')} Verifying <b>{reference_type}</b> <code>{escape(clean)}</code>\n"
+        f"Order: <code>{escape(oid)}</code> • Amount: ₹{int(expected)}...",
+        parse_mode="HTML")
+
+    # Only Vercel API is called. Gmail/App Password are read from this bot DB
+    # inside external_fampay.py; they are never hard-coded here.
+    result = await verify_fampay_reference_async(clean, expected, oid)
+
+    if not result.get("success"):
+        await msg.reply_text(
+            f"{emo('❌')} <b>Verification failed</b>\n\n"
+            f"{escape(str(result.get('message') or 'Verification service error.'))}",
+            parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+                [ibtn("RETRY", f"utr_enter|{oid}", emoji="🔄", style="primary")],
+                [ibtn("HOME", "home", emoji="🏠", style="primary")]]))
+        return
+
+    if not result.get("verified"):
+        data = result.get("data") or {}
+        received = data.get("received_amount") or data.get("amount")
+        message = str(result.get("message") or "Payment not verified")
+        if message.lower() == "amount mismatch" or result.get("status") == "mismatch":
+            message = f"Amount mismatch. Expected ₹{expected:g}, received ₹{received or '?'}"
+        await msg.reply_text(
+            f"{emo('⚠️')} <b>Payment not verified</b>\n\n{escape(message)}",
+            parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+                [ibtn("RETRY", f"utr_enter|{oid}", emoji="🔄", style="primary")],
+                [ibtn("HOME", "home", emoji="🏠", style="primary")]]))
+        return
+
+    data = result.get("data") or {}
+    try:
+        paid = float(data.get("amount"))
+    except Exception:
+        paid = None
+    if paid is None:
+        await msg.reply_text(f"{emo('❌')} API did not return a payment amount. Not credited.",
+                             parse_mode="HTML"); return
+
+    # Exact amount check AGAIN locally. Never credit on API/client mismatch.
+    if abs(paid - expected) > 0.01:
+        utr_v = (data.get("utr") or (clean if reference_type == "UTR" else "")).strip().upper() or None
+        txn_v = (data.get("transaction_id") or (clean if reference_type == "TXN" else "")).strip().upper() or None
+        cur.execute(
+            "UPDATE upi_orders SET status='mismatch', paid_amount=?, utr=?, txn_id=?, verified_via='fampay_api' WHERE order_id=?",
+            (paid, utr_v, txn_v, oid))
+        db.commit()
+        await _send_mismatch_alert(uid, oid, expected, paid, utr_v, txn_v, "fampay_api")
+        waiting_utr.pop(uid, None)
+        return
+
+    utr_v = (data.get("utr") or (clean if reference_type == "UTR" else "")).strip().upper() or None
+    txn_v = (data.get("transaction_id") or (clean if reference_type == "TXN" else "")).strip().upper() or None
+
     existing = None
-    if utr_v: existing = is_utr_used_by_other_order(utr_v, oid)
-    if not existing and txn_v: existing = is_txn_used_by_other_order(txn_v, oid)
+    if utr_v:
+        existing = is_utr_used_by_other_order(utr_v, oid)
+    if not existing and txn_v:
+        existing = is_txn_used_by_other_order(txn_v, oid)
     if existing:
         waiting_utr.pop(uid, None)
-        cur.execute("UPDATE upi_orders SET status='duplicate' WHERE order_id=?", (oid,)); db.commit()
-        await _send_double_payment_alert(uid, oid, utr_v, txn_v, existing); return
-    if ea is None or abs(ea - exp) > 0.01:
-        try:
-            cur.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?", (oid, row["msg_id"]))
-            cur.execute("""UPDATE upi_orders SET status='mismatch', paid_amount=?, utr=?, txn_id=?,
-                verified_via='utr_manual_mismatch' WHERE order_id=?""",
-                (ea or 0, utr_v, txn_v, oid)); db.commit()
-        except: pass
-        waiting_utr.pop(uid, None)
-        await _send_mismatch_alert(uid, oid, exp, ea or 0, utr_v or clean, txn_v, "utr_manual"); return
-    try:
-        cur.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?", (oid, row["msg_id"])); db.commit()
-    except: pass
-    ok = await complete_upi_order(oid, uid, int(exp), None, "fampay_utr_manual", utr=utr_v, txn=txn_v)
+        cur.execute(
+            "UPDATE upi_orders SET status='duplicate', utr=?, txn_id=? WHERE order_id=?",
+            (utr_v, txn_v, oid)); db.commit()
+        await _send_double_payment_alert(uid, oid, utr_v, txn_v, existing)
+        return
+
+    ok = await complete_upi_order(oid, uid, int(expected), None, "fampay_api", utr=utr_v, txn=txn_v)
     waiting_utr.pop(uid, None)
     if ok:
-        await msg.reply_text(f"{emo('✅')} Verified via UTR! ₹{int(exp)} credited.",
-                             parse_mode="HTML", reply_markup=main_reply_kb(uid))
+        await msg.reply_text(
+            f"{emo('✅')} <b>PAYMENT VERIFIED</b>\n\n"
+            f"Order: <code>{escape(oid)}</code>\n"
+            f"₹{int(expected)} credited successfully.\n"
+            f"Reference: <code>{escape(utr_v or txn_v or clean)}</code>\n"
+            f"Source: Vercel FamPay API",
+            parse_mode="HTML", reply_markup=main_reply_kb(uid))
     else:
-        await msg.reply_text(f"{emo('⚠️')} Already processed.", parse_mode="HTML",
-                             reply_markup=main_reply_kb(uid))
+        await msg.reply_text(f"{emo('⚠️')} Already processed or no longer pending.",
+                             parse_mode="HTML", reply_markup=main_reply_kb(uid))
+
 
 async def handle_deposit_amount(update, context):
     msg = update.message; uid = update.effective_user.id; text = msg.text or ""
@@ -445,6 +492,7 @@ from database import (
 )
 from emojis import emo
 from fampay import _send_double_payment_alert, _send_mismatch_alert
+from external_fampay import verify_fampay_reference_async
 from history import record_balance_history
 from logs import (
     _full_name, _now_str, get_log_targets, log_balance_transfer, log_deposit,
