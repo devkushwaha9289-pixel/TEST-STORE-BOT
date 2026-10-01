@@ -188,6 +188,49 @@ async def view_admin_s3_item(update, pid):
                           fallback_text=f"📦 {p['name']}", edit_query=_edit_query_of(update))
 
 
+async def process_file_purchase_from_miniapp(uid, prod_id):
+    """Real SERVER3 purchase worker for the Mini App (non-OSINT products)."""
+    p = cur.execute("SELECT * FROM file_products WHERE id=? AND active=1", (prod_id,)).fetchone()
+    if not p:
+        raise RuntimeError("Product not found")
+    if p['section'] == 'OSINT APIS':
+        from osint import process_osint_purchase_from_miniapp
+        return await process_osint_purchase_from_miniapp(uid, prod_id)
+
+    r = get_user(uid)
+    price = int(p['price'])
+    d = int(safe_get(r, 'discount', 0) or 0)
+    final = price if d == 0 else int(price * (100 - d) / 100)
+    bal = int(safe_get(r, 'balance', 0) or 0)
+    if bal < final:
+        raise RuntimeError(f"Insufficient balance. Need ₹{final}")
+
+    link = (p['file_link'] or '').strip()
+    brand = get_panel_brand_name(p['name'], link) if p['section'] == 'PANNELS' else p['name']
+    async with get_user_lock(uid):
+        cur.execute("UPDATE users SET balance=balance-?, total_purchases=COALESCE(total_purchases,0)+1, total_spent=COALESCE(total_spent,0)+? WHERE user_id=? AND balance>=?",
+                    (final, final, uid, final))
+        if cur.rowcount != 1:
+            raise RuntimeError("Insufficient balance")
+        oid = generate_unique_order_id(uid)
+        cur.execute("""INSERT INTO orders (user_id, country, year, price, phone, otp, section)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (uid, p['section'], now_ist().year, final, brand, 'FILE', p['section']))
+        db.commit()
+        record_balance_history(uid, -final, 'purchase', f"server3:{p['section']}",
+                               f"Mini App {p['name']}", bal, bal - final)
+        r2 = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
+
+    await log_purchase_both(uid, oid, p['name'], final, 'N/A', 'N/A', 'N/A',
+                            r2['balance'] if r2 else 0, status='Completed', is_file=True,
+                            deep_link=build_deep_link_s3(p['section'], p['item_code']))
+    try: asyncio.create_task(process_referral_bonus(uid, final))
+    except Exception: pass
+    return {'ok': True, 'order_id': oid, 'amount': final, 'name': p['name'],
+            'link': link, 'api_endpoint': p['api_endpoint'] or '',
+            'item_code': p['item_code'] or '', 'message': 'Purchase successful.'}
+
+
 async def process_file_purchase(update, prod_id):
     uid = update.effective_user.id
     p = cur.execute("SELECT * FROM file_products WHERE id=? AND active=1", (prod_id,)).fetchone()
