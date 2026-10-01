@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-RIVAL SMS SHOP — Mini App Backend (FastAPI)
+VILLAGEE SMS SHOP Mini App Backend (FastAPI)
 Serves the Mini App + REST APIs + Health endpoints.
 Validates Telegram WebApp initData.
 Reads the same SQLite DB used by the bot.
@@ -114,7 +114,7 @@ def _uptime_str(sec):
     return " ".join(out)
 
 # ---------- app ----------
-app = FastAPI(title="RIVAL Mini App")
+app = FastAPI(title="VILLAGEE SMS SHOP Mini App")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -155,7 +155,7 @@ async def status():
         from context import BOT_CONTEXTS
         running = sum(1 for ctx in BOT_CONTEXTS if ctx.started)
         return {
-            "store": "RIVAL SMS SHOP",
+            "store": "VILLAGEE SMS SHOP",
             "version": "28.4",
             "uptime": _uptime_str(time.time() - _START_TS),
             "miniapp": True,
@@ -223,7 +223,7 @@ async def api_config(a=Depends(auth)):
         raise HTTPException(500, "DB missing")
     try:
         return {
-            "store_name":  "RIVAL SMS SHOP",
+            "store_name":  "VILLAGEE SMS SHOP",
             "support_url": gs(con, "support_url", "https://t.me/Z4X_Silent_Boy"),
             "min_deposit": int(float(gs(con, "min_deposit", "10"))),
             "usdt_rate":   float(gs(con, "usdt_rate", "90")),
@@ -446,6 +446,14 @@ class PaymentVerifyReq(BaseModel):
     utr: Optional[str] = None
     txn: Optional[str] = None
 
+
+async def _complete_miniapp_upi_order(order_id, uid, amount, utr=None, txn=None):
+    """Use the bot's canonical UPI completion path for Mini App verification."""
+    from payments import complete_upi_order
+    return await complete_upi_order(
+        order_id, uid, amount, None, "miniapp_utr", utr=utr, txn=txn
+    )
+
 @app.post("/api/verify-payment")
 async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
     uid = a["user"]["id"]
@@ -538,12 +546,30 @@ async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
             return {"verified": False, "status": "mismatch", "expected": expected, "paid": paid,
                     "message": f"Amount mismatch. Expected ₹{int(expected)}, found ₹{paid:g}."}
 
-        con.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?", (req.order_id, match["msg_id"]))
-        con.execute("UPDATE upi_orders SET status='success', paid_amount=?, utr=?, txn_id=?, verified_via='miniapp_utr' WHERE order_id=?",
-                    (paid, match["utr"], match["txn_id"], req.order_id))
-        con.execute("UPDATE users SET balance=balance+?, total_deposited=COALESCE(total_deposited,0)+? WHERE user_id=?",
-                    (int(expected), int(expected), uid))
+        # Mark the exact bank/FamPay email as consumed, then let the same
+        # bot-side completion function perform the credit.  This keeps Mini
+        # App and Telegram Bot verification identical (balance, history,
+        # referral bonus, duplicate protection, notifications, etc.).
+        con.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?",
+                    (req.order_id, match["msg_id"]))
         con.commit()
+
+        try:
+            result = await run_in_bot_context(
+                a["un"],
+                lambda: _complete_miniapp_upi_order(
+                    req.order_id, uid, int(expected), match["utr"], match["txn_id"]
+                ),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, str(e))
+
+        if not result:
+            return {"verified": False, "status": "already_processed",
+                    "message": "Payment was already processed or is no longer pending."}
+
         return {"verified": True, "status": "success", "amount": int(expected),
                 "message": f"₹{int(expected)} credited successfully."}
     finally:
