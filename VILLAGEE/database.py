@@ -113,6 +113,13 @@ def _init_schema():
         action TEXT, source TEXT, note TEXT, old_balance INTEGER, new_balance INTEGER,
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS referral_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER NOT NULL,
+        referred_user_id INTEGER NOT NULL, bonus_amount INTEGER DEFAULT 0,
+        deposit_amount INTEGER DEFAULT 0, percent REAL DEFAULT 0,
+        event_type TEXT DEFAULT 'bonus',
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS manual_upi_orders (
         order_id TEXT PRIMARY KEY, user_id INTEGER, amount INTEGER,
         utr TEXT, proof_file_id TEXT, status TEXT DEFAULT 'pending',
