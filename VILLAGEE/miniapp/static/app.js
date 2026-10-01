@@ -3,7 +3,7 @@ const BOT_USERNAME = new URLSearchParams(location.search).get('bot') || '';
 
 tg?.ready();
 tg?.expand();
-try { tg?.setHeaderColor('#0e1621'); tg?.setBackgroundColor('#0e1621'); } catch(e){}
+try { tg?.setHeaderColor('#f5f7fb'); tg?.setBackgroundColor('#f5f7fb'); } catch(e){}
 
 const STATE = { config:null, user:null, tab:'home' };
 
