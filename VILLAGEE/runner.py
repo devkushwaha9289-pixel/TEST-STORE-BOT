@@ -36,10 +36,13 @@ async def _post_init_for(app, ctx):
 
         # ⭐ Mini App — set bot menu button (opens WebApp)
         try:
-            await set_menu_button(app, ctx.username)
-            log.info(f"✅ Mini App menu set @{ctx.username}")
+            ok = await set_menu_button(app, ctx.username)
+            if ok:
+                log.info(f"✅ Mini App menu + commands set @{ctx.username}")
+            else:
+                log.error(f"❌ Mini App menu setup failed @{ctx.username}")
         except Exception as e:
-            log.warning(f"Mini App menu @{ctx.username}: {e}")
+            log.exception(f"Mini App menu @{ctx.username}: {e}")
 
         log.info(f"✅ Loops @{ctx.username}")
     finally:
