@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VILLAGEE SMS SHOP — Mini App Backend (FastAPI)
+RIVAL SMS SHOP — Mini App Backend (FastAPI)
 Serves the Mini App + REST APIs + Health endpoints.
 Validates Telegram WebApp initData.
 Reads the same SQLite DB used by the bot.
@@ -114,7 +114,7 @@ def _uptime_str(sec):
     return " ".join(out)
 
 # ---------- app ----------
-app = FastAPI(title="VILLAGEE Mini App")
+app = FastAPI(title="RIVAL Mini App")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -133,75 +133,36 @@ async def root():
 
 @app.get("/health")
 async def health():
+    # Public endpoint: do not expose bot usernames, owner IDs, user counts,
+    # master IDs, tokens, or other private bot metadata.
     try:
-        from context import BOT_CONTEXTS, MASTER_OWNER_ID
-        bots = []
-        running = 0
-        total_users = 0
-        for ctx in BOT_CONTEXTS:
-            if ctx.started: running += 1
-            try:
-                from context import _current_bot
-                tok = _current_bot.set(ctx)
-                try:
-                    u = ctx.cur.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-                except Exception:
-                    u = 0
-                finally:
-                    _current_bot.reset(tok)
-            except Exception:
-                u = 0
-            total_users += u
-            bots.append({
-                "username": ctx.username,
-                "started": bool(ctx.started),
-                "owner_id": ctx.owner_id,
-                "is_master": ctx.is_master,
-                "users": u,
-            })
+        from context import BOT_CONTEXTS
+        running = sum(1 for ctx in BOT_CONTEXTS if ctx.started)
         healthy = running > 0
         return {
             "status": "ok" if healthy else "degraded",
             "healthy": healthy,
             "uptime": _uptime_str(time.time() - _START_TS),
-            "miniapp_url": os.getenv("MINIAPP_URL", "") or None,
-            "bots": {
-                "total": len(bots),
-                "running": running,
-                "total_users": total_users,
-                "list": bots,
-            },
-            "master_owner": MASTER_OWNER_ID,
+            "miniapp": True,
         }
-    except Exception as e:
-        return {"status": "error", "msg": str(e)}
+    except Exception:
+        return {"status": "error", "healthy": False}
 
 @app.get("/status")
 async def status():
+    # Public endpoint kept intentionally minimal. Bot/admin metadata is private.
     try:
-        from context import BOT_CONTEXTS, MASTER_OWNER_ID
-        from datetime import datetime
-        bots = []
-        running = 0
-        for ctx in BOT_CONTEXTS:
-            if ctx.started: running += 1
-            bots.append({
-                "username": ctx.username,
-                "started": bool(ctx.started),
-                "owner_id": ctx.owner_id,
-                "is_master": ctx.is_master,
-            })
+        from context import BOT_CONTEXTS
+        running = sum(1 for ctx in BOT_CONTEXTS if ctx.started)
         return {
-            "store": "VILLAGEE SMS SHOP",
+            "store": "RIVAL SMS SHOP",
             "version": "28.4",
-            "time_ist": datetime.now(IST).strftime("%d-%m-%Y %I:%M:%S %p"),
             "uptime": _uptime_str(time.time() - _START_TS),
             "miniapp": True,
-            "bots": {"total": len(bots), "running": running, "list": bots},
-            "master_owner": MASTER_OWNER_ID,
+            "running": bool(running),
         }
-    except Exception as e:
-        return {"status": "error", "msg": str(e)}
+    except Exception:
+        return {"status": "error"}
 
 @app.get("/ping")
 async def ping():
@@ -262,9 +223,7 @@ async def api_config(a=Depends(auth)):
         raise HTTPException(500, "DB missing")
     try:
         return {
-            "store_name":  "VILLAGEE SMS SHOP",
-            "contact_1":   gs(con, "contact_1", "@Z4X_Silent_Boy"),
-            "contact_2":   gs(con, "contact_2", "@VILLAGEE_SMS_UPDATEs"),
+            "store_name":  "RIVAL SMS SHOP",
             "support_url": gs(con, "support_url", "https://t.me/Z4X_Silent_Boy"),
             "min_deposit": int(float(gs(con, "min_deposit", "10"))),
             "usdt_rate":   float(gs(con, "usdt_rate", "90")),
