@@ -94,7 +94,7 @@ class BotContext:
         self.db.execute("PRAGMA journal_mode=WAL;")
         self.cur = self.db.cursor()
         self.app = None; self.telethon_client = None
-        self.telethon_loop = None; self.started = False
+        self.telethon_loop = None; self.fampay_task = None; self.started = False
         tok = _current_bot.set(self)
         try: _init_schema()
         finally: _current_bot.reset(tok)
@@ -111,14 +111,28 @@ class BotContext:
         # Applied automatically to every configured bot on startup.
         # =====================================================
         try:
-            from miniapp_integration import set_menu_button
-            ok = await set_menu_button(app, self.username)
-            if ok:
-                log.info(f"🛍️ Mini App menu + commands set @{self.username}")
-            else:
-                log.error(f"❌ Mini App menu setup failed @{self.username}")
+            from miniapp_integration import set_bot_commands, set_menu_button
+            await set_bot_commands(app)
+            await set_menu_button(app, self.username)
+            log.info(f"🛍️ Mini App menu + /commands set @{self.username}")
         except Exception as e:
-            log.exception(f"⚠️ Mini App menu setup @{self.username}: {e}")
+            log.warning(f"⚠️ Mini App menu button @{self.username}: {e}")
+
+        # IMPORTANT: this project starts PTB manually (initialize/start/start_polling),
+        # so Application.post_init is not guaranteed to run. Start the payment
+        # verification worker explicitly here, with this bot's context captured.
+        tok = _current_bot.set(self)
+        try:
+            from fampay import fampay_imap_poll_loop
+            self.fampay_task = asyncio.create_task(
+                fampay_imap_poll_loop(),
+                name=f"fampay-auto-{self.username}"
+            )
+            log.info(f"💳 FamPay auto-verification loop started @{self.username}")
+        except Exception as e:
+            log.exception(f"❌ FamPay auto-verification start failed @{self.username}: {e}")
+        finally:
+            _current_bot.reset(tok)
 
         await app.start()
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
@@ -126,6 +140,13 @@ class BotContext:
 
     async def stop(self):
         if not self.started: return
+        if self.fampay_task:
+            try:
+                self.fampay_task.cancel()
+                await asyncio.gather(self.fampay_task, return_exceptions=True)
+            except Exception:
+                pass
+            self.fampay_task = None
         try: await self.app.updater.stop()
         except: pass
         try: await self.app.stop()
