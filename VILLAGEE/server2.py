@@ -162,6 +162,96 @@ async def view_product_detail(update, phone):
         log.error(f"view_product_detail: {e}")
 
 # ============================================================
+# MINI APP PURCHASE BRIDGE
+# ============================================================
+async def process_purchase_from_miniapp(uid, phone):
+    """Run the real SERVER2 purchase flow from the Telegram Mini App.
+
+    This function intentionally reuses the same balance reservation, Telethon
+    session validation and auto-OTP flow as the Telegram button purchase.
+    It runs on the owning bot event loop so contextvars/current_ctx() remain
+    correct for multi-bot deployments.
+    """
+    row = cur.execute("""SELECT phone, session_file, country_icon, country_name, account_year,
+        twofa, price, category, server FROM stock WHERE phone=? AND available=1""", (phone,)).fetchone()
+    if not row:
+        raise RuntimeError("Sold out")
+
+    r = get_user(uid)
+    price = int(row["price"])
+    d = int(safe_get(r, "discount", 0) or 0)
+    final = price if d == 0 else int(price * (100 - d) / 100)
+    bal = int(safe_get(r, "balance", 0) or 0)
+    if bal < final:
+        raise RuntimeError(f"Insufficient balance. Need ₹{final}")
+
+    # Atomic wallet debit + stock reservation.
+    async with get_user_lock(uid):
+        cur.execute("UPDATE users SET balance=balance-? WHERE user_id=? AND balance>=?",
+                    (final, uid, final))
+        if cur.rowcount != 1:
+            raise RuntimeError("Insufficient balance")
+        cur.execute("UPDATE stock SET available=0 WHERE phone=? AND available=1", (phone,))
+        if cur.rowcount != 1:
+            db.rollback()
+            raise RuntimeError("Item was just sold. Please refresh stock.")
+        db.commit()
+        record_balance_history(uid, -final, "purchase", f"server2:{row['category']}",
+                               f"Mini App item {phone}", bal, bal - final)
+
+    sess = row["session_file"] or f"sessions/{phone}.session"
+    clean = sess.replace(".session", "")
+    ctx = current_ctx()
+    client = None
+    try:
+        client = TelegramClient(f"{ctx.data_dir}/{clean}", API_ID, API_HASH)
+        await client.connect()
+        if not await client.is_user_authorized():
+            raise RuntimeError("Invalid session")
+
+        oid = generate_unique_order_id(uid)
+        try:
+            await _tg_post("sendMessage", {
+                "chat_id": uid, "parse_mode": "HTML",
+                "text": f"{emo('⏳')} <b>Mini App purchase processing...</b>\n\n📱 <code>{phone}</code>\n💰 ₹{final}\n🆔 <code>{oid}</code>"
+            })
+        except Exception:
+            pass
+
+        try:
+            await log_purchase_both(uid, oid, f"{row['country_icon']} {row['country_name']}",
+                                    final, phone, "N/A", row["twofa"],
+                                    bal - final, status="Pending", is_file=False,
+                                    deep_link=build_deep_link_s2(row["category"], row["country_name"]))
+        except Exception as e:
+            log.warning(f"miniapp purchase log: {e}")
+
+        active_orders[phone] = {
+            'uid': uid, 'client': client, 'sess': sess, 'start': time.time(),
+            'paid': False, 'price': final, 'country': row['country_name'],
+            'year': row['account_year'], 'c_icon': row['country_icon'],
+            'twofa': row['twofa'], 'msg_id': None, 'chat_id': uid,
+            'order_id': oid, 'category': row['category'], 'server': row['server'],
+        }
+        asyncio.create_task(auto_otp_task(phone))
+        return {"ok": True, "order_id": oid, "amount": final, "phone": phone,
+                "message": "Purchase accepted. OTP will be sent to your Telegram chat."}
+    except Exception:
+        # Refund and release stock if session setup/purchase preparation fails.
+        if client:
+            try: await client.disconnect()
+            except Exception: pass
+        async with get_user_lock(uid):
+            r2 = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
+            old = int(r2["balance"] if r2 else 0)
+            cur.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (final, uid))
+            cur.execute("UPDATE stock SET available=1 WHERE phone=?", (phone,))
+            db.commit()
+            record_balance_history(uid, final, "refund", "miniapp_purchase",
+                                   "Purchase setup failed", old, old + final)
+        raise
+
+# ============================================================
 # PURCHASE FLOW
 # ============================================================
 async def process_purchase(update, phone):
