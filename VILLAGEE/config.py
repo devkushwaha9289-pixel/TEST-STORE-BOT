@@ -21,7 +21,7 @@ def now_ist(): return datetime.now(IST)
 API_ID = int(os.getenv("API_ID", "32208414"))
 API_HASH = os.getenv("API_HASH", "628f11c05a44c8dda4b006e66f4bf7df")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8688851169:AAEtvbAYart5t7h4QnCi2aS5C0TN6RN7Daw")
-MINIAPP_URL=https://test-store-bot-1.onrender.com
+MINIAPP_URL="https://test-store-bot-1.onrender.com"
 STORE_HEADER = "🅱️ VILLAGEE SMS SHOP"
 DEFAULT_CONTACT_1 = "@Z4X_Silent_Boy"
 DEFAULT_CONTACT_2 = "@VILLAGEE_SMS_UPDATEs"
