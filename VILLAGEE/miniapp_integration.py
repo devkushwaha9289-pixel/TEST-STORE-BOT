@@ -11,7 +11,7 @@ from telegram import (
 )
 from telegram.ext import CommandHandler
 
-MINIAPP_URL = os.getenv("MINIAPP_URL", "https://test-store-bot-1.onrender.com").rstrip("/")
+MINIAPP_URL = os.getenv("MINIAPP_URL", "").rstrip("/")
 
 def _webapp_url(bot_username: str) -> str:
     return f"{MINIAPP_URL}/?bot={bot_username}"
