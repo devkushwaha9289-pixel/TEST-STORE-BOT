@@ -43,6 +43,28 @@ def get_bot_by_username(un: str):
             return {"token": token, **info}
     return None
 
+def ensure_shared_schema(con):
+    """Add columns used to bridge Mini App purchases with the Telegram bot."""
+    migrations = [
+        ("order_id", "TEXT"),
+        ("source", "TEXT DEFAULT 'bot'"),
+        ("status", "TEXT DEFAULT 'Completed'"),
+    ]
+    for col, typ in migrations:
+        try:
+            con.execute(f"ALTER TABLE orders ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass
+    try:
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_order_id ON orders(order_id) WHERE order_id IS NOT NULL")
+    except Exception:
+        pass
+    try:
+        con.commit()
+    except Exception:
+        pass
+
+
 def open_db(username: str):
     path = os.path.join(BASE_DIR, "bots", username, "otp_bot_final.db")
     if not os.path.exists(path):
@@ -50,6 +72,7 @@ def open_db(username: str):
     con = sqlite3.connect(path, check_same_thread=False, timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL;")
+    ensure_shared_schema(con)
     return con
 
 def validate_init(init_data: str, bot_token: str):
@@ -223,6 +246,7 @@ async def api_config(a=Depends(auth)):
             "buy1":        gs(con, "buy1_status", "on"),
             "buy2":        gs(con, "buy2_status", "on"),
             "buy3":        gs(con, "buy3_status", "on"),
+            "qr_provider": "https://api.qrserver.com/v1/create-qr-code/",
         }
     finally:
         con.close()
@@ -396,33 +420,178 @@ async def api_purchase(req: PurchaseReq, a=Depends(auth)):
         ).fetchone()
         if not r:
             raise HTTPException(404, "Sold out")
+        if str(r["server"] or "") != "SERVER2":
+            raise HTTPException(400, "This item must be purchased from its supported server")
         u = con.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
         price = int(r["price"])
-        disc  = int(u["discount"] or 0) if u else 0
+        disc = int(u["discount"] or 0) if u else 0
         final = price if not disc else int(price * (100 - disc) / 100)
-        bal   = int(u["balance"] or 0) if u else 0
+        bal = int(u["balance"] or 0) if u else 0
         if bal < final:
             raise HTTPException(400, f"Insufficient balance. Need ₹{final}")
+
         oid = gen_oid()
-        con.execute(
+        cur = con.cursor()
+        cur.execute(
             "UPDATE users SET balance=balance-? WHERE user_id=? AND balance>=?",
             (final, uid, final),
         )
-        con.execute("UPDATE stock SET available=0 WHERE phone=?", (req.phone,))
+        if cur.rowcount != 1:
+            raise HTTPException(400, "Insufficient balance")
+        cur.execute("UPDATE stock SET available=0 WHERE phone=? AND available=1", (req.phone,))
+        if cur.rowcount != 1:
+            con.rollback()
+            raise HTTPException(409, "Item was just sold. Please refresh stock.")
+
         con.execute("""
-            INSERT INTO orders (user_id, country, year, price, phone, otp, section)
-            VALUES (?,?,?,?,?,?,?)
-        """, (uid, r["country_name"], r["account_year"] or 2024,
-              final, req.phone, "APP_PENDING", "SERVER2"))
+            INSERT INTO orders
+            (order_id, user_id, country, year, price, phone, otp, twofa, source, status)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, (
+            oid, uid, r["country_name"], r["account_year"] or 2024,
+            final, req.phone, "APP_PENDING", r["twofa"] or "None",
+            "miniapp", "APP_PENDING"
+        ))
         con.execute("""
             INSERT INTO balance_history
             (user_id, amount, action, source, note, old_balance, new_balance)
             VALUES (?,?,?,?,?,?,?)
-        """, (uid, -final, "purchase", "miniapp",
-              f"Item {req.phone}", bal, bal - final))
+        """, (uid, -final, "purchase", "miniapp", f"Item {req.phone}", bal, bal-final))
+        con.commit()
+        return {
+            "ok": True,
+            "order_id": oid,
+            "amount": final,
+            "message": "Order created. The bot will send the OTP here automatically."
+        }
+    finally:
+        con.close()
+
+
+class FilePurchaseReq(BaseModel):
+    product_id: int
+
+@app.post("/api/purchase/file")
+async def api_purchase_file(req: FilePurchaseReq, a=Depends(auth)):
+    uid = a["user"]["id"]
+    con = open_db(a["un"])
+    if not con:
+        raise HTTPException(500, "DB missing")
+    try:
+        p = con.execute(
+            "SELECT * FROM file_products WHERE id=? AND active=1", (req.product_id,)
+        ).fetchone()
+        if not p:
+            raise HTTPException(404, "Product not found")
+        u = con.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
+        price = int(p["price"])
+        disc = int(u["discount"] or 0) if u else 0
+        final = price if not disc else int(price * (100 - disc) / 100)
+        bal = int(u["balance"] or 0) if u else 0
+        if bal < final:
+            raise HTTPException(400, f"Insufficient balance. Need ₹{final}")
+        oid = gen_oid()
+        cur = con.cursor()
+        cur.execute(
+            "UPDATE users SET balance=balance-?, total_purchases=COALESCE(total_purchases,0)+1, total_spent=COALESCE(total_spent,0)+? WHERE user_id=? AND balance>=?",
+            (final, final, uid, final),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(400, "Insufficient balance")
+        con.execute("""
+            INSERT INTO orders
+            (order_id, user_id, country, year, price, phone, otp, source, status)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (oid, uid, p["section"], time.localtime().tm_year, final,
+              f"FILE:{p['id']}", "FILE", "miniapp", "Completed"))
+        con.execute("""
+            INSERT INTO balance_history
+            (user_id, amount, action, source, note, old_balance, new_balance)
+            VALUES (?,?,?,?,?,?,?)
+        """, (uid, -final, "purchase", "miniapp", f"File {p['name']}", bal, bal-final))
         con.commit()
         return {"ok": True, "order_id": oid, "amount": final,
-                "message": "Order created. Open the bot chat to receive OTP."}
+                "name": p["name"], "link": p["file_link"] or "",
+                "message": "Purchase successful."}
+    finally:
+        con.close()
+
+
+class PaymentVerifyReq(BaseModel):
+    order_id: str
+    utr: Optional[str] = None
+    txn: Optional[str] = None
+
+@app.post("/api/verify-payment")
+async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
+    uid = a["user"]["id"]
+    utr = (req.utr or "").strip().upper()
+    txn = (req.txn or "").strip().upper()
+    if not utr and not txn:
+        raise HTTPException(400, "Enter UTR or Transaction ID")
+    con = open_db(a["un"])
+    if not con:
+        raise HTTPException(500, "DB missing")
+    try:
+        order = con.execute(
+            "SELECT order_id, user_id, amount, status FROM upi_orders WHERE order_id=? AND user_id=?",
+            (req.order_id, uid),
+        ).fetchone()
+        if not order:
+            raise HTTPException(404, "Payment order not found")
+        if order["status"] == "success":
+            return {"verified": True, "status": "success", "message": "Already credited"}
+        if order["status"] in ("expired", "failed", "mismatch", "duplicate"):
+            raise HTTPException(400, f"Order is {order['status']}")
+
+        # Find the bank/FamPay record by UTR, TXN or order id.
+        conditions = []
+        params = []
+        if utr:
+            conditions.append("UPPER(COALESCE(utr,''))=?")
+            params.append(utr)
+        if txn:
+            conditions.append("UPPER(COALESCE(txn_id,''))=?")
+            params.append(txn)
+        where = " OR ".join(conditions)
+        match = con.execute(
+            f"SELECT msg_id, amount, utr, txn_id, order_id FROM fampay_emails WHERE {where} ORDER BY received_ts DESC LIMIT 1",
+            params,
+        ).fetchone()
+        if not match:
+            return {"verified": False, "status": "not_found", "message": "UTR/TXN not found yet. Wait and try again."}
+
+        # Reject reuse of an already successful UTR/TXN.
+        dup = None
+        if match["utr"]:
+            dup = con.execute("SELECT order_id FROM upi_orders WHERE UPPER(COALESCE(utr,''))=UPPER(?) AND status='success' AND order_id!=? LIMIT 1", (match["utr"], req.order_id)).fetchone()
+        if not dup and match["txn_id"]:
+            dup = con.execute("SELECT order_id FROM upi_orders WHERE UPPER(COALESCE(txn_id,''))=UPPER(?) AND status='success' AND order_id!=? LIMIT 1", (match["txn_id"], req.order_id)).fetchone()
+        if dup:
+            con.execute("UPDATE upi_orders SET status='duplicate', utr=?, txn_id=? WHERE order_id=?", (match["utr"], match["txn_id"], req.order_id))
+            con.commit()
+            return {"verified": False, "status": "duplicate", "message": "This payment reference was already used."}
+
+        try:
+            paid = float(match["amount"])
+        except Exception:
+            paid = 0.0
+        expected = float(order["amount"])
+        if abs(paid - expected) > 0.01:
+            con.execute("UPDATE upi_orders SET status='mismatch', paid_amount=?, utr=?, txn_id=?, verified_via='miniapp_utr' WHERE order_id=?",
+                        (paid, match["utr"], match["txn_id"], req.order_id))
+            con.commit()
+            return {"verified": False, "status": "mismatch", "expected": expected, "paid": paid,
+                    "message": f"Amount mismatch. Expected ₹{int(expected)}, found ₹{paid:g}."}
+
+        con.execute("UPDATE fampay_emails SET matched_order_id=? WHERE msg_id=?", (req.order_id, match["msg_id"]))
+        con.execute("UPDATE upi_orders SET status='success', paid_amount=?, utr=?, txn_id=?, verified_via='miniapp_utr' WHERE order_id=?",
+                    (paid, match["utr"], match["txn_id"], req.order_id))
+        con.execute("UPDATE users SET balance=balance+?, total_deposited=COALESCE(total_deposited,0)+? WHERE user_id=?",
+                    (int(expected), int(expected), uid))
+        con.commit()
+        return {"verified": True, "status": "success", "amount": int(expected),
+                "message": f"₹{int(expected)} credited successfully."}
     finally:
         con.close()
 
@@ -451,7 +620,7 @@ async def api_dep_manual(req: DepositReq, a=Depends(auth)):
             INSERT INTO upi_orders
             (order_id, user_id, amount, status, created_ts, verified_via)
             VALUES (?,?,?,?,?,?)
-        """, (oid, uid, req.amount, "manual_pending", time.time(), "manual_upi"))
+        """, (oid, uid, req.amount, "pending", time.time(), "manual_upi"))
         con.execute("""
             INSERT OR REPLACE INTO manual_upi_orders
             (order_id, user_id, amount, status, created_ts)
@@ -464,7 +633,7 @@ async def api_dep_manual(req: DepositReq, a=Depends(auth)):
             "upi_id": upi,
             "amount": req.amount,
             "upi_url": upi_url(upi, req.amount, oid, UPI_NAME),
-            "instructions": "Open the bot chat → send UTR + screenshot",
+            "instructions": "Pay the exact amount, then enter UTR or Transaction ID below.",
         }
     finally:
         con.close()
