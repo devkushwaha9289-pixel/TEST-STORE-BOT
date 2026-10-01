@@ -112,10 +112,13 @@ class BotContext:
         # =====================================================
         try:
             from miniapp_integration import set_menu_button
-            await set_menu_button(app, self.username)
-            log.info(f"🛍️ Mini App menu button set @{self.username}")
+            ok = await set_menu_button(app, self.username)
+            if ok:
+                log.info(f"🛍️ Mini App menu + commands set @{self.username}")
+            else:
+                log.error(f"❌ Mini App menu setup failed @{self.username}")
         except Exception as e:
-            log.warning(f"⚠️ Mini App menu button @{self.username}: {e}")
+            log.exception(f"⚠️ Mini App menu setup @{self.username}: {e}")
 
         await app.start()
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
