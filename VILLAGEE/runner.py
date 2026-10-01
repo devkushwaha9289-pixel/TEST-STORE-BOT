@@ -7,6 +7,7 @@ Per-bot Application builder and multi-bot runner.
 """
 
 import asyncio
+from miniapp_integration import cmd_app, set_bot_commands, set_menu_button
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telethon import TelegramClient
 
