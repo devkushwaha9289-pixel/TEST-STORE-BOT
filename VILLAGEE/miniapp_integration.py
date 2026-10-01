@@ -4,14 +4,14 @@
 VILLAGEE — Mini App integration for the bot.
 Adds a /app command and sets the bot menu button to open the Mini App.
 """
-import os
 from telegram import (
     InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo,
     MenuButtonWebApp
 )
 from telegram.ext import CommandHandler
 
-MINIAPP_URL = os.getenv("MINIAPP_URL", "").rstrip("/")
+MINIAPP_URL = "https://test-store-bot-1.onrender.com"
+MINIAPP_BUTTON_TEXT = "🛍️ Shop"
 
 def _webapp_url(bot_username: str) -> str:
     return f"{MINIAPP_URL}/?bot={bot_username}"
@@ -35,7 +35,7 @@ async def set_menu_button(app, bot_username: str):
     url = _webapp_url(bot_username)
     try:
         await app.bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="🛒 Store", web_app=WebAppInfo(url=url))
+            menu_button=MenuButtonWebApp(text=MINIAPP_BUTTON_TEXT, web_app=WebAppInfo(url=url))
         )
     except Exception as e:
         from config import log
