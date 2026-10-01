@@ -313,7 +313,7 @@ async function openSection(sec) {
       </div>`;
 
     el.querySelectorAll('[data-id]').forEach(r =>
-      r.onclick = () => toast('Open the bot chat to buy this item')
+      r.onclick = () => buyFileProduct(Number(r.dataset.id))
     );
   } catch(e) {
     toast('❌ ' + e.message);
@@ -333,7 +333,7 @@ async function buyItem(phone) {
 
     toast(`✅ Order ${r.order_id} placed!`);
     if (tg?.showAlert) {
-      tg.showAlert('Order placed!\n\nOpen the bot chat to receive the OTP.');
+      tg.showAlert('Order placed!\n\nThe bot will send the OTP here automatically.');
     }
 
     await loadMe();
@@ -342,6 +342,67 @@ async function buyItem(phone) {
     toast('❌ ' + e.message);
   } finally {
     showLoader(false);
+  }
+}
+
+async function buyFileProduct(productId) {
+  showLoader(true);
+  try {
+    const r = await api('/api/purchase/file', {
+      method:'POST', body:JSON.stringify({product_id: productId})
+    });
+    toast(`✅ ${r.name} purchased`);
+    const result = document.getElementById('main');
+    result.innerHTML = `
+      <div class="detail purchase-success-card">
+        <div class="success-icon">✓</div>
+        <div class="detail-title">Purchase Successful</div>
+        <div class="detail-price">${fmt(r.amount)}</div>
+        <div class="detail-rows">
+          <div><span>Product</span><b>${esc(r.name)}</b></div>
+          <div><span>Order ID</span><b><code>${esc(r.order_id)}</code></b></div>
+        </div>
+        ${r.link ? `<a class="btn btn-success" href="${esc(r.link)}" target="_blank" rel="noopener">Open / Download</a>` : `<div class="note">Delivery link is not configured. Contact support.</div>`}
+        <button class="btn btn-primary" id="backStore">Back to Store</button>
+      </div>`;
+    document.getElementById('backStore').onclick = () => switchTab('store');
+    await loadMe();
+  } catch(e) {
+    toast('❌ ' + e.message);
+  } finally {
+    showLoader(false);
+  }
+}
+
+function renderPaymentStatus(oid) {
+  const box = document.getElementById('paymentStatus');
+  if (!box) return;
+  box.innerHTML = `<div class="payment-status waiting"><span class="status-dot"></span><span>Waiting for payment verification…</span></div>`;
+}
+
+async function verifyPaymentRef(oid) {
+  const utr = (document.getElementById('utrInput')?.value || '').trim();
+  const txn = (document.getElementById('txnInput')?.value || '').trim();
+  if (!utr && !txn) { toast('Enter UTR or Transaction ID'); return; }
+  const btn = document.getElementById('verifyPaymentBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
+  try {
+    const r = await api('/api/verify-payment', {
+      method:'POST', body:JSON.stringify({order_id:oid, utr:utr || null, txn:txn || null})
+    });
+    if (r.verified && r.status === 'success') {
+      toast(`✅ ₹${r.amount || ''} credited successfully!`, 3500);
+      await loadMe();
+      const box = document.getElementById('paymentStatus');
+      if (box) box.innerHTML = `<div class="payment-status success"><span>✓</span><span>${esc(r.message)}</span></div>`;
+      setTimeout(() => switchTab('home'), 1200);
+    } else {
+      toast('⚠️ ' + (r.message || r.status || 'Verification pending'));
+    }
+  } catch(e) {
+    toast('❌ ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Verify UTR / TXN'; }
   }
 }
 
@@ -391,26 +452,40 @@ async function makeDeposit(method, amount) {
     toast(`Minimum ₹${STATE.config.min_deposit}`);
     return;
   }
-
   showLoader(true);
   try {
     const r = await api(`/api/deposit/${method}`, {
-      method:'POST',
-      body:JSON.stringify({amount})
+      method:'POST', body:JSON.stringify({amount})
     });
-
-    const qr = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(r.upi_url)}`;
-
+    const qr = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=8&data=${encodeURIComponent(r.upi_url)}`;
     document.getElementById('depResult').innerHTML = `
-      <div class="pay-card">
+      <div class="pay-card rainbow-pay-card">
+        <div class="pay-badge">SECURE UPI PAYMENT</div>
         <div class="pay-title">Pay ${fmt(r.amount)}</div>
-        <img src="${qr}" alt="Payment QR" class="qr">
+        <div class="pay-subtitle">Scan QR • Pay exact amount • Verify with UTR/TXN</div>
+        <div class="qr-frame">
+          <div class="qr-frame-inner">
+            <img src="${qr}" alt="Payment QR" class="qr">
+          </div>
+        </div>
         <div class="upi-id">UPI ID: <b>${esc(r.upi_id)}</b></div>
-        <a class="btn" href="${esc(r.upi_url)}">Open UPI App</a>
-        <div class="note">${method==='auto' ? 'Waiting for payment verification…' : esc(r.instructions)}</div>
-        <div class="note">Order: <code>${esc(r.order_id)}</code></div>
+        <a class="btn btn-primary" href="${esc(r.upi_url)}">Open UPI App</a>
+        <div class="payment-meta">
+          <div><span>Amount</span><b>${fmt(r.amount)}</b></div>
+          <div><span>Order</span><code>${esc(r.order_id)}</code></div>
+        </div>
+        <div class="verify-box">
+          <div class="verify-title">Payment Verification</div>
+          <div class="verify-hint">After payment, enter either your UTR or Transaction ID.</div>
+          <input id="utrInput" class="verify-input" type="text" inputmode="numeric" autocomplete="off" placeholder="UTR / UTR Number">
+          <input id="txnInput" class="verify-input" type="text" autocomplete="off" placeholder="Transaction ID (optional)">
+          <button class="btn btn-success" id="verifyPaymentBtn">Verify UTR / TXN</button>
+          <div id="paymentStatus"></div>
+        </div>
+        <div class="note">Do not submit the same UTR/TXN for another order. Verification only credits the exact order amount.</div>
       </div>`;
-
+    renderPaymentStatus(r.order_id);
+    document.getElementById('verifyPaymentBtn').onclick = () => verifyPaymentRef(r.order_id);
     if (method === 'auto') pollOrder(r.order_id);
   } catch(e) {
     toast('❌ ' + e.message);
@@ -418,6 +493,7 @@ async function makeDeposit(method, amount) {
     showLoader(false);
   }
 }
+
 
 function pollOrder(oid) {
   let n = 0;
