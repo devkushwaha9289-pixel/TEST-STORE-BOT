@@ -52,7 +52,7 @@ async function renderStore(){
       <button class="card" data-go="deposit" type="button"><div class="card-icon">＋</div><div class="card-title">Recharge</div><div class="card-sub">Add balance with UPI</div></button>
       <button class="card" data-go="profile" type="button"><div class="card-icon">◉</div><div class="card-title">My Orders</div><div class="card-sub">History & account</div></button>
       <button class="card" data-go="refer" type="button"><div class="card-icon">↗</div><div class="card-title">Refer</div><div class="card-sub">Share & earn</div></button>
-      <button class="card" data-action="server1" type="button"><div class="card-icon">🌐</div><div class="card-title">Server 1</div><div class="card-sub">Open LZT in Telegram</div></button>
+      <button class="card" data-action="server1" type="button"><div class="card-icon">🌐</div><div class="card-title">Server 1</div><div class="card-sub">Open in Telegram</div></button>
     </div>
 
     <div class="section-title">Marketplace</div>
@@ -63,7 +63,7 @@ async function renderStore(){
       </button>
       <button class="card big" data-srv="s3" type="button">
         <div class="card-icon">▤</div><div class="card-title">SERVER 3</div>
-        <div class="card-sub">Files, panels & API products • ${Number(counts.s3?.count||0)} available</div>
+        <div class="card-sub">Digital products • ${Number(counts.s3?.count||0)} available</div>
       </button>
     </div>
     <div class="note">Purchases use your wallet balance. Recharge first if your balance is too low. Server 1 remains in the Telegram bot because its live external-market flow is bot-native.</div>`;
@@ -208,7 +208,7 @@ async function makeDeposit(method,amount){
     if(method==='auto') pollPayment(r.order_id);
   }catch(e){toast('❌ '+e.message);}finally{loading(false);}
 }
-async function downloadQR(url,oid){try{const r=await fetch(url);if(!r.ok)throw 0;const blob=await r.blob();const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=`RIVAL_QR_${oid}.png`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){window.open(url,'_blank','noopener');}}
+async function downloadQR(url,oid){try{const r=await fetch(url);if(!r.ok)throw 0;const blob=await r.blob();const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=`VILLAGEE_QR_${oid}.png`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){window.open(url,'_blank','noopener');}}
 async function verifyPayment(oid){
   const input=document.getElementById('paymentRef'), btn=document.getElementById('verifyPayment'); const ref=(input?.value||'').trim();
   if(ref.length<4){toast('Enter a valid UTR/TXN');return;} if(btn){btn.disabled=true;btn.textContent='Checking…';}
@@ -232,7 +232,7 @@ async function renderRefer(){
         <div class="refer-head">Share your link — earn for every referral</div>
         <div class="refer-link">${esc(r.link)}</div>
         <button class="btn btn-primary" id="copyReferral" type="button">Copy Link</button>
-        <a class="btn btn-success" href="https://t.me/share/url?url=${encodeURIComponent(r.link)}&text=${encodeURIComponent('Join RIVAL SMS SHOP')}" target="_blank" rel="noopener">Share on Telegram</a>
+        <a class="btn btn-success" href="https://t.me/share/url?url=${encodeURIComponent(r.link)}&text=${encodeURIComponent('Join VILLAGEE SMS SHOP')}" target="_blank" rel="noopener">Share on Telegram</a>
       </div>
       <div class="section-title">Referral Summary</div>
       <div class="stats">
@@ -279,7 +279,7 @@ async function renderProfile(){
     </div>
     <div class="section-title">Terms & Policies</div>
     <div class="list">
-      <button class="row" data-profile-page="terms" type="button"><div class="row-icon">📄</div><div class="row-main"><div class="row-title">Terms & Conditions</div><div class="row-sub">Rules for using RIVAL SMS SHOP</div></div><div class="row-arrow">›</div></button>
+      <button class="row" data-profile-page="terms" type="button"><div class="row-icon">📄</div><div class="row-main"><div class="row-title">Terms & Conditions</div><div class="row-sub">Rules for using VILLAGEE SMS SHOP</div></div><div class="row-arrow">›</div></button>
       <button class="row" data-profile-page="refund" type="button"><div class="row-icon">🚫</div><div class="row-main"><div class="row-title">Refund Policy</div><div class="row-sub">All purchases are final — no refund</div></div><div class="row-arrow">›</div></button>
       <button class="row" data-profile-page="privacy" type="button"><div class="row-icon">🛡️</div><div class="row-main"><div class="row-title">Privacy Policy</div><div class="row-sub">How account and order information is used</div></div><div class="row-arrow">›</div></button>
     </div>
@@ -304,7 +304,7 @@ async function openProfilePage(page){
   try{
     if(page==='terms'){
       policyPage('Terms & Conditions','📄',[
-        ['1. Acceptance','By using RIVAL SMS SHOP, you agree to these Terms & Conditions. If you do not agree, do not use the marketplace.'],
+        ['1. Acceptance','By using VILLAGEE SMS SHOP, you agree to these Terms & Conditions. If you do not agree, do not use the marketplace.'],
         ['2. Account','You must provide accurate Telegram account information and keep your account secure. You are responsible for activity performed through your account.'],
         ['3. Purchases','Orders are processed using the wallet balance shown in the Mini App. Product details, availability and delivery can vary by server.'],
         ['4. Account Products','Only use products/accounts in accordance with applicable laws and the product instructions. Do not submit or use accounts that you do not own or have permission to use.'],
