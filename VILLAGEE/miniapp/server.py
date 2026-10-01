@@ -6,7 +6,7 @@ Serves the Mini App + REST APIs + Health endpoints.
 Validates Telegram WebApp initData.
 Reads the same SQLite DB used by the bot.
 """
-import os, sys, json, hmac, hashlib, sqlite3, time, secrets, string
+import os, sys, json, hmac, hashlib, sqlite3, time, secrets, string, asyncio
 from urllib.parse import parse_qsl, quote
 from datetime import timedelta, timezone
 from typing import Optional
@@ -224,6 +224,34 @@ async def auth(
     return {"user": user, "bot": bot, "un": x_bot_username}
 
 
+async def run_in_bot_context(username: str, coro_factory):
+    """Execute a bot-module coroutine on the owning bot event loop.
+
+    The bot runner uses one asyncio loop per bot. Mini App FastAPI runs on a
+    different loop, so direct calls to bot handlers would lose the current
+    BotContext. This bridge preserves the correct context for multi-bot use.
+    """
+    from context import BOTS_BY_USERNAME, _current_bot
+    ctx = BOTS_BY_USERNAME.get(username)
+    if not ctx or not ctx.started or not ctx.telethon_loop:
+        raise HTTPException(503, "Bot is not ready")
+
+    async def runner():
+        tok = _current_bot.set(ctx)
+        try:
+            return await coro_factory()
+        finally:
+            _current_bot.reset(tok)
+
+    fut = asyncio.run_coroutine_threadsafe(runner(), ctx.telethon_loop)
+    try:
+        return await asyncio.wrap_future(fut)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
 # ============================================================
 # CONFIG
 # ============================================================
@@ -247,6 +275,13 @@ async def api_config(a=Depends(auth)):
             "buy2":        gs(con, "buy2_status", "on"),
             "buy3":        gs(con, "buy3_status", "on"),
             "qr_provider": "https://api.qrserver.com/v1/create-qr-code/",
+            "features": {
+                "server1": gs(con, "buy1_status", "on") == "on",
+                "server2": gs(con, "buy2_status", "on") == "on",
+                "server3": gs(con, "buy3_status", "on") == "on",
+                "wallet": gs(con, "upi_status", "on") == "on",
+                "referral": True,
+            },
         }
     finally:
         con.close()
@@ -392,7 +427,7 @@ async def api_s3_items(section: str, a=Depends(auth)):
         raise HTTPException(500, "DB missing")
     try:
         rows = con.execute("""
-            SELECT id, name, price, description
+            SELECT id, name, price, description, file_link, api_endpoint, item_code
             FROM file_products
             WHERE section=? AND active=1
             ORDER BY sort_order, id
@@ -411,61 +446,23 @@ class PurchaseReq(BaseModel):
 @app.post("/api/purchase")
 async def api_purchase(req: PurchaseReq, a=Depends(auth)):
     uid = a["user"]["id"]
-    con = open_db(a["un"])
-    if not con:
-        raise HTTPException(500, "DB missing")
+    phone = (req.phone or "").strip()
+    if not phone:
+        raise HTTPException(400, "Phone is required")
+
+    # IMPORTANT: the real Telegram purchase worker performs the debit, stock
+    # reservation, Telethon validation and auto-OTP setup. Do not duplicate
+    # those operations in the Mini App DB connection.
     try:
-        r = con.execute(
-            "SELECT * FROM stock WHERE phone=? AND available=1", (req.phone,)
-        ).fetchone()
-        if not r:
-            raise HTTPException(404, "Sold out")
-        if str(r["server"] or "") != "SERVER2":
-            raise HTTPException(400, "This item must be purchased from its supported server")
-        u = con.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
-        price = int(r["price"])
-        disc = int(u["discount"] or 0) if u else 0
-        final = price if not disc else int(price * (100 - disc) / 100)
-        bal = int(u["balance"] or 0) if u else 0
-        if bal < final:
-            raise HTTPException(400, f"Insufficient balance. Need ₹{final}")
-
-        oid = gen_oid()
-        cur = con.cursor()
-        cur.execute(
-            "UPDATE users SET balance=balance-? WHERE user_id=? AND balance>=?",
-            (final, uid, final),
+        from server2 import process_purchase_from_miniapp
+        return await run_in_bot_context(
+            a["un"],
+            lambda: process_purchase_from_miniapp(uid, phone),
         )
-        if cur.rowcount != 1:
-            raise HTTPException(400, "Insufficient balance")
-        cur.execute("UPDATE stock SET available=0 WHERE phone=? AND available=1", (req.phone,))
-        if cur.rowcount != 1:
-            con.rollback()
-            raise HTTPException(409, "Item was just sold. Please refresh stock.")
-
-        con.execute("""
-            INSERT INTO orders
-            (order_id, user_id, country, year, price, phone, otp, twofa, source, status)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-        """, (
-            oid, uid, r["country_name"], r["account_year"] or 2024,
-            final, req.phone, "APP_PENDING", r["twofa"] or "None",
-            "miniapp", "APP_PENDING"
-        ))
-        con.execute("""
-            INSERT INTO balance_history
-            (user_id, amount, action, source, note, old_balance, new_balance)
-            VALUES (?,?,?,?,?,?,?)
-        """, (uid, -final, "purchase", "miniapp", f"Item {req.phone}", bal, bal-final))
-        con.commit()
-        return {
-            "ok": True,
-            "order_id": oid,
-            "amount": final,
-            "message": "Order created. The bot will send the OTP here automatically."
-        }
-    finally:
-        con.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 
 class FilePurchaseReq(BaseModel):
@@ -473,48 +470,16 @@ class FilePurchaseReq(BaseModel):
 
 @app.post("/api/purchase/file")
 async def api_purchase_file(req: FilePurchaseReq, a=Depends(auth)):
-    uid = a["user"]["id"]
-    con = open_db(a["un"])
-    if not con:
-        raise HTTPException(500, "DB missing")
     try:
-        p = con.execute(
-            "SELECT * FROM file_products WHERE id=? AND active=1", (req.product_id,)
-        ).fetchone()
-        if not p:
-            raise HTTPException(404, "Product not found")
-        u = con.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
-        price = int(p["price"])
-        disc = int(u["discount"] or 0) if u else 0
-        final = price if not disc else int(price * (100 - disc) / 100)
-        bal = int(u["balance"] or 0) if u else 0
-        if bal < final:
-            raise HTTPException(400, f"Insufficient balance. Need ₹{final}")
-        oid = gen_oid()
-        cur = con.cursor()
-        cur.execute(
-            "UPDATE users SET balance=balance-?, total_purchases=COALESCE(total_purchases,0)+1, total_spent=COALESCE(total_spent,0)+? WHERE user_id=? AND balance>=?",
-            (final, final, uid, final),
+        from server3 import process_file_purchase_from_miniapp
+        return await run_in_bot_context(
+            a["un"],
+            lambda: process_file_purchase_from_miniapp(a["user"]["id"], int(req.product_id)),
         )
-        if cur.rowcount != 1:
-            raise HTTPException(400, "Insufficient balance")
-        con.execute("""
-            INSERT INTO orders
-            (order_id, user_id, country, year, price, phone, otp, source, status)
-            VALUES (?,?,?,?,?,?,?,?,?)
-        """, (oid, uid, p["section"], time.localtime().tm_year, final,
-              f"FILE:{p['id']}", "FILE", "miniapp", "Completed"))
-        con.execute("""
-            INSERT INTO balance_history
-            (user_id, amount, action, source, note, old_balance, new_balance)
-            VALUES (?,?,?,?,?,?,?)
-        """, (uid, -final, "purchase", "miniapp", f"File {p['name']}", bal, bal-final))
-        con.commit()
-        return {"ok": True, "order_id": oid, "amount": final,
-                "name": p["name"], "link": p["file_link"] or "",
-                "message": "Purchase successful."}
-    finally:
-        con.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 
 class PaymentVerifyReq(BaseModel):
@@ -543,6 +508,36 @@ async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
             return {"verified": True, "status": "success", "message": "Already credited"}
         if order["status"] in ("expired", "failed", "mismatch", "duplicate"):
             raise HTTPException(400, f"Order is {order['status']}")
+
+        # Manual UPI orders are approved by the Telegram admin workflow.
+        # The Mini App can submit the UTR here, after which the same owner
+        # approval buttons used by the Telegram bot are sent to the owner.
+        manual = con.execute(
+            "SELECT order_id, amount, status FROM manual_upi_orders WHERE order_id=? AND user_id=?",
+            (req.order_id, uid),
+        ).fetchone()
+        if manual:
+            if manual["status"] == "approved":
+                return {"verified": True, "status": "success", "message": "Already credited"}
+            if manual["status"] in ("rejected", "expired"):
+                raise HTTPException(400, f"Order is {manual['status']}")
+            con.execute("UPDATE manual_upi_orders SET utr=?, status='submitted' WHERE order_id=?",
+                        (utr or txn, req.order_id))
+            con.execute("UPDATE upi_orders SET utr=?, status='manual_pending' WHERE order_id=?",
+                        (utr or txn, req.order_id))
+            con.commit()
+            try:
+                from manual_upi import submit_manual_upi_from_miniapp
+                await run_in_bot_context(
+                    a["un"],
+                    lambda: submit_manual_upi_from_miniapp(uid, req.order_id, utr or txn),
+                )
+            except Exception as e:
+                raise HTTPException(400, str(e))
+            return {
+                "verified": False, "status": "manual_pending",
+                "message": "UTR submitted. Waiting for admin approval.",
+            }
 
         # Find the bank/FamPay record by UTR, TXN or order id.
         conditions = []
