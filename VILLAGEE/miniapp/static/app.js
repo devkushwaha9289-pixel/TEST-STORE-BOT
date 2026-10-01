@@ -201,20 +201,29 @@ async function makeDeposit(method,amount){
   try{
     const r=await api(`/api/deposit/${method}`,{method:'POST',body:JSON.stringify({amount:Math.floor(amount)})});
     const qr=`https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=8&data=${encodeURIComponent(r.upi_url)}`;
-    document.getElementById('depResult').innerHTML=`<div class="rainbow-pay-card"><div class="pay-badge">SECURE UPI PAYMENT</div><div class="pay-title">Pay ${fmt(r.amount)}</div><div class="pay-subtitle">Scan QR • Pay exact amount • Submit UTR/TXN</div><div class="qr-frame"><div class="qr-frame-inner"><img class="qr" src="${qr}" alt="UPI payment QR"></div></div><div class="upi-id">UPI ID: <b>${esc(r.upi_id)}</b></div><div class="payment-meta"><div><span>Amount</span><b>${fmt(r.amount)}</b></div><div><span>Order</span><code>${esc(r.order_id)}</code></div></div><button class="btn btn-primary" id="downloadQr" type="button">Download QR</button><div class="verify-box"><div class="verify-title">Payment Verification</div><div class="verify-hint">After payment, enter the UTR or transaction ID.</div><input id="paymentRef" class="verify-input" type="text" autocomplete="off" placeholder="UTR / TXN ID"><button class="btn btn-success" id="verifyPayment" type="button">Submit & Verify</button><div id="paymentStatus"></div></div><div class="note">Auto UPI credits when a matching bank/FamPay record is found. Manual UPI sends the UTR to the Telegram owner for approval.</div></div>`;
+    document.getElementById('depResult').innerHTML=`<div class="rainbow-pay-card"><div class="pay-badge">SECURE UPI PAYMENT</div><div class="pay-title">Pay ${fmt(r.amount)}</div><div class="pay-subtitle">Scan QR • Pay exact amount • Submit UTR/TXN</div><div class="qr-frame"><div class="qr-frame-inner"><img class="qr" src="${qr}" alt="UPI payment QR"></div></div><div class="upi-id">UPI ID: <b>${esc(r.upi_id)}</b></div><div class="payment-meta"><div><span>Amount</span><b>${fmt(r.amount)}</b></div><div><span>Order</span><code>${esc(r.order_id)}</code></div></div><button class="btn btn-primary" id="downloadQr" type="button">Download QR</button><div class="verify-box"><div class="verify-title">Payment Verification</div><div class="verify-hint">Enter 12-digit numeric UTR, or enter Transaction ID (TXN). The order amount is taken from this Order automatically.</div><label class="verify-label" for="paymentReference">UTR / Transaction ID (TXN)</label><input id="paymentReference" class="verify-input" type="text" autocomplete="off" spellcheck="false" placeholder="12-digit UTR or FMPIB..."><button class="btn btn-success" id="verifyPayment" type="button">Submit & Verify</button><div id="paymentStatus"></div></div><div class="note">After payment, submit the UTR/TXN above. Verification uses the Gmail + App Password configured by Admin and the amount saved against this Order.</div></div>`;
     document.getElementById('downloadQr').onclick=()=>downloadQR(qr,r.order_id);
     document.getElementById('verifyPayment').onclick=()=>verifyPayment(r.order_id);
     renderPaymentStatus(r.order_id);
-    if(method==='auto') pollPayment(r.order_id);
   }catch(e){toast('❌ '+e.message);}finally{loading(false);}
 }
 async function downloadQR(url,oid){try{const r=await fetch(url);if(!r.ok)throw 0;const blob=await r.blob();const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=`VILLAGEE_QR_${oid}.png`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){window.open(url,'_blank','noopener');}}
 async function verifyPayment(oid){
-  const input=document.getElementById('paymentRef'), btn=document.getElementById('verifyPayment'); const ref=(input?.value||'').trim();
-  if(ref.length<4){toast('Enter a valid UTR/TXN');return;} if(btn){btn.disabled=true;btn.textContent='Checking…';}
-  try{const r=await api('/api/verify-payment',{method:'POST',body:JSON.stringify({order_id:oid,utr:ref})});renderPaymentStatus(oid);toast(r.message||'Submitted');if(r.status==='success'){await loadMe();}}
-  catch(e){toast('❌ '+e.message);renderPaymentStatus(oid);}finally{if(btn){btn.disabled=false;btn.textContent='Submit & Verify';}}
+  const reference=(document.getElementById('paymentReference')?.value||'').trim();
+  const btn=document.getElementById('verifyPayment');
+  if(!reference){toast('Enter UTR or Transaction ID');return;}
+  const clean=reference.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+  if(/^\d+$/.test(clean) && clean.length!==12){toast('UTR must be exactly 12 digits');return;}
+  if(!/^\d{12}$/.test(clean) && clean.length<6){toast('Enter a valid Transaction ID');return;}
+  if(btn){btn.disabled=true;btn.textContent='Checking…';}
+  try{
+    const r=await api('/api/verify-payment',{method:'POST',body:JSON.stringify({order_id:oid,reference:clean})});
+    renderPaymentStatus(oid); toast(r.message||'Submitted');
+    if(r.status==='success'){await loadMe();}
+  }catch(e){toast('❌ '+e.message);renderPaymentStatus(oid);}
+  finally{if(btn){btn.disabled=false;btn.textContent='Submit & Verify';}}
 }
+
 async function renderPaymentStatus(oid){const el=document.getElementById('paymentStatus');if(!el)return;try{const r=await api(`/api/order/${encodeURIComponent(oid)}`);const ok=r.status==='success';el.className=`payment-status ${ok?'success':'waiting'}`;el.innerHTML=`<div><span class="status-dot"></span>${ok?'Payment credited':'Status: '+esc(r.status||'pending')}</div>`;}catch(e){}}
 function pollPayment(oid){clearInterval(STATE.paymentTimer);let n=0;STATE.paymentTimer=setInterval(async()=>{n++;if(n>90){clearInterval(STATE.paymentTimer);return;}try{const r=await api(`/api/order/${encodeURIComponent(oid)}`);if(r.status==='success'){clearInterval(STATE.paymentTimer);await loadMe();renderPaymentStatus(oid);toast('✅ Balance credited');}else if(['expired','failed','mismatch','duplicate'].includes(r.status)){clearInterval(STATE.paymentTimer);renderPaymentStatus(oid);}}catch(e){}},5000);}
 
