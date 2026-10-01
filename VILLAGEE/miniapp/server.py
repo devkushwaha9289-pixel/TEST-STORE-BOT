@@ -691,8 +691,74 @@ async def api_history(a=Depends(auth)):
         raise HTTPException(500, "DB missing")
     try:
         rows = con.execute("""
-            SELECT phone, country, price, date FROM orders
-            WHERE user_id=? ORDER BY id DESC LIMIT 30
+            SELECT phone, country, price, date, section, status, order_id
+            FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 50
+        """, (uid,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+@app.get("/api/deposit-history")
+async def api_deposit_history(a=Depends(auth)):
+    uid = a["user"]["id"]
+    con = open_db(a["un"])
+    if not con:
+        raise HTTPException(500, "DB missing")
+    try:
+        rows = con.execute("""
+            SELECT amount, method_name, status, date
+            FROM deposits WHERE user_id=? ORDER BY id DESC LIMIT 50
+        """, (uid,)).fetchall()
+        auto_rows = con.execute("""
+            SELECT amount, 'UPI AUTO' AS method_name, status, date
+            FROM upi_orders WHERE user_id=? ORDER BY date DESC LIMIT 50
+        """, (uid,)).fetchall()
+        manual_rows = con.execute("""
+            SELECT amount, 'UPI MANUAL' AS method_name, status, date
+            FROM manual_upi_orders WHERE user_id=? ORDER BY date DESC LIMIT 50
+        """, (uid,)).fetchall()
+        merged = [dict(r) for r in rows] + [dict(r) for r in auto_rows] + [dict(r) for r in manual_rows]
+        merged.sort(key=lambda x: str(x.get('date') or ''), reverse=True)
+        return merged[:50]
+    finally:
+        con.close()
+
+@app.get("/api/referrals")
+async def api_referrals(a=Depends(auth)):
+    uid = a["user"]["id"]
+    con = open_db(a["un"])
+    if not con:
+        raise HTTPException(500, "DB missing")
+    try:
+        rows = con.execute("""
+            SELECT user_id, first_name, last_name, username, joined_date
+            FROM users WHERE referred_by=? ORDER BY joined_date DESC LIMIT 50
+        """, (uid,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+@app.get("/api/referral-history")
+async def api_referral_history(a=Depends(auth)):
+    uid = a["user"]["id"]
+    con = open_db(a["un"])
+    if not con:
+        raise HTTPException(500, "DB missing")
+    try:
+        # Older databases may not have the ledger yet; create it lazily.
+        con.execute("""CREATE TABLE IF NOT EXISTS referral_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER NOT NULL,
+            referred_user_id INTEGER NOT NULL, bonus_amount INTEGER DEFAULT 0,
+            deposit_amount INTEGER DEFAULT 0, percent REAL DEFAULT 0,
+            event_type TEXT DEFAULT 'bonus', date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.commit()
+        rows = con.execute("""
+            SELECT rh.bonus_amount, rh.deposit_amount, rh.percent, rh.event_type, rh.date,
+                   rh.referred_user_id, u.first_name, u.last_name, u.username
+            FROM referral_history rh
+            LEFT JOIN users u ON u.user_id=rh.referred_user_id
+            WHERE rh.referrer_id=? ORDER BY rh.id DESC LIMIT 50
         """, (uid,)).fetchall()
         return [dict(r) for r in rows]
     finally:
