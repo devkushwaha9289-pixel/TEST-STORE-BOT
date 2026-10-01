@@ -220,13 +220,136 @@ function pollPayment(oid){clearInterval(STATE.paymentTimer);let n=0;STATE.paymen
 
 /* REFERRAL */
 async function renderRefer(){
-  crumbs(null); loading(true); try{const r=await api('/api/refer');const el=document.getElementById('main');el.innerHTML=`<div class="section-title">Referral Program</div><div class="refer-box"><div class="refer-head">Share your link — earn for every referral</div><div class="refer-link">${esc(r.link)}</div><button class="btn btn-primary" id="copyReferral" type="button">Copy Link</button><a class="btn btn-success" href="https://t.me/share/url?url=${encodeURIComponent(r.link)}&text=${encodeURIComponent('Join VILLAGEE SMS SHOP')}" target="_blank" rel="noopener">Share on Telegram</a></div>`;document.getElementById('copyReferral').onclick=async()=>{try{await navigator.clipboard.writeText(r.link);toast('✅ Link copied');}catch(e){toast('Copy blocked by browser');}};}catch(e){toast('❌ '+e.message);}finally{loading(false);}}
+  crumbs(null); loading(true);
+  try{
+    const [r, referrals, earnings] = await Promise.all([
+      api('/api/refer'), api('/api/referrals'), api('/api/referral-history')
+    ]);
+    const el=document.getElementById('main');
+    el.innerHTML=`
+      <div class="section-title">Referral Program</div>
+      <div class="refer-box">
+        <div class="refer-head">Share your link — earn for every referral</div>
+        <div class="refer-link">${esc(r.link)}</div>
+        <button class="btn btn-primary" id="copyReferral" type="button">Copy Link</button>
+        <a class="btn btn-success" href="https://t.me/share/url?url=${encodeURIComponent(r.link)}&text=${encodeURIComponent('Join VILLAGEE SMS SHOP')}" target="_blank" rel="noopener">Share on Telegram</a>
+      </div>
+      <div class="section-title">Referral Summary</div>
+      <div class="stats">
+        <div class="stat"><div class="s-val">${Number(STATE.user?.referral_count||referrals.length||0)}</div><div class="s-lbl">Total Referrals</div></div>
+        <div class="stat"><div class="s-val">${fmt(STATE.user?.referral_earnings)}</div><div class="s-lbl">Referral Earnings</div></div>
+      </div>
+      <div class="section-title">Refer History</div>
+      <div class="list">
+        ${referrals.map(x=>`<div class="row"><div class="row-icon">👤</div><div class="row-main"><div class="row-title">${esc(((x.first_name||'User')+' '+(x.last_name||'')).trim())}</div><div class="row-sub">${x.username?'@'+esc(x.username)+' • ':''}ID ${esc(x.user_id)} • ${esc((x.joined_date||'').slice(0,16))}</div></div><div class="row-price">Joined</div></div>`).join('') || '<div class="empty">No referrals yet</div>'}
+      </div>
+      <div class="section-title">Referral Earnings History</div>
+      <div class="list">
+        ${earnings.map(x=>`<div class="row"><div class="row-icon">🎁</div><div class="row-main"><div class="row-title">Bonus ${fmt(x.bonus_amount)}</div><div class="row-sub">User ${esc(x.referred_user_id)} • Deposit ${fmt(x.deposit_amount)} • ${esc((x.date||'').slice(0,16))}</div></div><div class="row-price">+${fmt(x.bonus_amount)}</div></div>`).join('') || '<div class="empty">No referral earnings yet</div>'}
+      </div>`;
+    document.getElementById('copyReferral').onclick=async()=>{
+      try{await navigator.clipboard.writeText(r.link);toast('✅ Link copied');}
+      catch(e){toast('Copy blocked by browser');}
+    };
+  }catch(e){toast('❌ '+e.message);}
+  finally{loading(false);}
+}
 
-/* PROFILE */
+/* PROFILE + SEPARATE HISTORY / LEGAL PAGES */
 async function renderProfile(){
-  crumbs(null); const u=STATE.user; const el=document.getElementById('main');
-  el.innerHTML=`<div class="section-title">Profile</div><div class="profile"><div class="p-name">${esc((u.first_name||'User')+' '+(u.last_name||''))}</div><div class="p-id">ID: ${esc(u.user_id)} ${u.username?'@'+esc(u.username):''}</div></div><div class="stats"><div class="stat"><div class="s-val">${fmt(u.balance)}</div><div class="s-lbl">Balance</div></div><div class="stat"><div class="s-val">${fmt(u.total_deposited)}</div><div class="s-lbl">Deposited</div></div><div class="stat"><div class="s-val">${Number(u.total_purchases||0)}</div><div class="s-lbl">Purchases</div></div><div class="stat"><div class="s-val">${Number(u.referral_count||0)}</div><div class="s-lbl">Referrals</div></div></div><div class="section-title">Purchase History</div><div id="hist" class="list"><div class="empty">Loading…</div></div>`;
-  try{const rows=await api('/api/history');document.getElementById('hist').innerHTML=rows.map(r=>`<div class="row"><div class="row-icon">📦</div><div class="row-main"><div class="row-title">${esc(r.phone||'Digital product')}</div><div class="row-sub">${esc(r.country||'')} • ${esc((r.date||'').slice(0,16))}</div></div><div class="row-price">${fmt(r.price)}</div></div>`).join('')||'<div class="empty">No purchases yet</div>';}catch(e){document.getElementById('hist').innerHTML='<div class="empty">Could not load history</div>';}}
+  crumbs(null);
+  const u=STATE.user, el=document.getElementById('main');
+  el.innerHTML=`
+    <div class="section-title">Profile</div>
+    <div class="profile">
+      <div class="p-name">${esc(((u.first_name||'User')+' '+(u.last_name||'')).trim())}</div>
+      <div class="p-id">ID: ${esc(u.user_id)} ${u.username?'@'+esc(u.username):''}</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="s-val">${fmt(u.balance)}</div><div class="s-lbl">Balance</div></div>
+      <div class="stat"><div class="s-val">${fmt(u.total_deposited)}</div><div class="s-lbl">Deposited</div></div>
+      <div class="stat"><div class="s-val">${Number(u.total_purchases||0)}</div><div class="s-lbl">Purchases</div></div>
+      <div class="stat"><div class="s-val">${Number(u.referral_count||0)}</div><div class="s-lbl">Referrals</div></div>
+    </div>
+    <div class="section-title">History</div>
+    <div class="list">
+      <button class="row" data-profile-page="purchases" type="button"><div class="row-icon">📦</div><div class="row-main"><div class="row-title">Purchase History</div><div class="row-sub">All purchased accounts, files and products</div></div><div class="row-arrow">›</div></button>
+      <button class="row" data-profile-page="recharges" type="button"><div class="row-icon">💳</div><div class="row-main"><div class="row-title">Recharge History</div><div class="row-sub">UPI auto/manual recharge records</div></div><div class="row-arrow">›</div></button>
+      <button class="row" data-profile-page="referrals" type="button"><div class="row-icon">👥</div><div class="row-main"><div class="row-title">Referral History</div><div class="row-sub">People referred and referral earnings</div></div><div class="row-arrow">›</div></button>
+    </div>
+    <div class="section-title">Terms & Policies</div>
+    <div class="list">
+      <button class="row" data-profile-page="terms" type="button"><div class="row-icon">📄</div><div class="row-main"><div class="row-title">Terms & Conditions</div><div class="row-sub">Rules for using VILLAGEE SMS SHOP</div></div><div class="row-arrow">›</div></button>
+      <button class="row" data-profile-page="refund" type="button"><div class="row-icon">🚫</div><div class="row-main"><div class="row-title">Refund Policy</div><div class="row-sub">All purchases are final — no refund</div></div><div class="row-arrow">›</div></button>
+      <button class="row" data-profile-page="privacy" type="button"><div class="row-icon">🛡️</div><div class="row-main"><div class="row-title">Privacy Policy</div><div class="row-sub">How account and order information is used</div></div><div class="row-arrow">›</div></button>
+    </div>
+    <div class="section-title">Support</div>
+    <button class="row" id="openSupport" type="button"><div class="row-icon">❓</div><div class="row-main"><div class="row-title">Help & Support</div><div class="row-sub">Open support in Telegram</div></div><div class="row-arrow">›</div></button>`;
+  el.querySelectorAll('[data-profile-page]').forEach(b=>b.onclick=()=>openProfilePage(b.dataset.profilePage));
+  document.getElementById('openSupport').onclick=()=>{
+    const url=STATE.config?.support_url || `https://t.me/${encodeURIComponent(BOT_USERNAME)}`;
+    try{tg?.openTelegramLink(url);}catch(e){window.open(url,'_blank','noopener');}
+  };
+}
+
+function policyPage(title, icon, sections){
+  const el=document.getElementById('main');
+  el.innerHTML=`<button class="btn btn-success" id="backProfile" type="button">← Back to Profile</button><div class="section-title">${icon} ${title}</div><div class="detail policy-page">${sections.map(s=>`<div class="policy-section"><div class="detail-title">${esc(s[0])}</div><div class="policy-text">${esc(s[1])}</div></div>`).join('')}</div>`;
+  document.getElementById('backProfile').onclick=renderProfile;
+}
+
+async function openProfilePage(page){
+  crumbs(['Profile', page]);
+  loading(true);
+  try{
+    if(page==='terms'){
+      policyPage('Terms & Conditions','📄',[
+        ['1. Acceptance','By using VILLAGEE SMS SHOP, you agree to these Terms & Conditions. If you do not agree, do not use the marketplace.'],
+        ['2. Account','You must provide accurate Telegram account information and keep your account secure. You are responsible for activity performed through your account.'],
+        ['3. Purchases','Orders are processed using the wallet balance shown in the Mini App. Product details, availability and delivery can vary by server.'],
+        ['4. Account Products','Only use products/accounts in accordance with applicable laws and the product instructions. Do not submit or use accounts that you do not own or have permission to use.'],
+        ['5. Prohibited Use','Fraud, abuse, chargeback abuse, stolen accounts, payment manipulation and attempts to bypass marketplace security may result in account suspension.'],
+        ['6. Changes','The marketplace may update products, prices, features or these terms. Continued use after an update means you accept the updated terms.']
+      ]);
+      return;
+    }
+    if(page==='refund'){
+      policyPage('Refund Policy','🚫',[
+        ['No Refund Policy','ALL PURCHASES ARE FINAL AND NON-REFUNDABLE. Once a product/order has been delivered, purchased or processed, the amount will not be refunded.'],
+        ['Before Purchase','Check the product, country, category, price and other displayed details before confirming payment. Ask support if you need clarification before buying.'],
+        ['Failed Technical Order','If the system records a genuine failed transaction before delivery, the marketplace may automatically restore the wallet amount where applicable. This is a transaction correction, not a general refund policy.'],
+        ['Payment Disputes','Do not submit false UTRs, duplicate payment claims or chargeback claims for completed purchases. Such activity may result in account restrictions.']
+      ]);
+      return;
+    }
+    if(page==='privacy'){
+      policyPage('Privacy Policy','🛡️',[
+        ['Information Used','The service may process your Telegram user ID, name, username, wallet activity, orders, recharge records and referral records to operate the marketplace.'],
+        ['Payments','UPI order information such as order ID, amount and submitted transaction reference may be stored for verification and fraud prevention.'],
+        ['Orders & Delivery','Purchase and delivery information may be retained so the bot can complete orders, provide support and maintain transaction records.'],
+        ['Security','Access to Mini App data is authenticated using Telegram WebApp initData. Do not share your Telegram account or payment credentials with others.'],
+        ['Data Requests','For account or data-related questions, contact the support channel provided by the bot.']
+      ]);
+      return;
+    }
+    if(page==='purchases'){
+      const rows=await api('/api/history');
+      const el=document.getElementById('main');
+      el.innerHTML=`<button class="btn btn-success" id="backProfile" type="button">← Back to Profile</button><div class="section-title">📦 Purchase History</div><div class="list">${rows.map(r=>`<div class="row"><div class="row-icon">📦</div><div class="row-main"><div class="row-title">${esc(r.phone||'Digital product')}</div><div class="row-sub">${esc(r.section||'ORDER')} • ${esc(r.country||'')} • ${esc((r.date||'').slice(0,16))}${r.status?' • '+esc(r.status):''}</div></div><div class="row-price">${fmt(r.price)}</div></div>`).join('')||'<div class="empty">No purchases yet</div>'}</div>`;
+      document.getElementById('backProfile').onclick=renderProfile; return;
+    }
+    if(page==='recharges'){
+      const rows=await api('/api/deposit-history');
+      const el=document.getElementById('main');
+      el.innerHTML=`<button class="btn btn-success" id="backProfile" type="button">← Back to Profile</button><div class="section-title">💳 Recharge History</div><div class="list">${rows.map(r=>`<div class="row"><div class="row-icon">💳</div><div class="row-main"><div class="row-title">${fmt(r.amount)} • ${esc(r.method_name||'UPI')}</div><div class="row-sub">${esc(r.status||'pending')} • ${esc((r.date||'').slice(0,16))}</div></div><div class="row-price">${esc(String(r.status||'pending'))}</div></div>`).join('')||'<div class="empty">No recharge history yet</div>'}</div>`;
+      document.getElementById('backProfile').onclick=renderProfile; return;
+    }
+    if(page==='referrals'){
+      renderRefer(); return;
+    }
+  }catch(e){toast('❌ '+e.message);}
+  finally{loading(false);}
+}
 
 /* NAV */
 function switchTab(tab){STATE.tab=tab;navButtons();({store:renderStore,deposit:renderDeposit,refer:renderRefer,profile:renderProfile}[tab]||renderStore)();}
