@@ -118,21 +118,10 @@ class BotContext:
         except Exception as e:
             log.warning(f"⚠️ Mini App menu button @{self.username}: {e}")
 
-        # IMPORTANT: this project starts PTB manually (initialize/start/start_polling),
-        # so Application.post_init is not guaranteed to run. Start the payment
-        # verification worker explicitly here, with this bot's context captured.
-        tok = _current_bot.set(self)
-        try:
-            from fampay import fampay_imap_poll_loop
-            self.fampay_task = asyncio.create_task(
-                fampay_imap_poll_loop(),
-                name=f"fampay-auto-{self.username}"
-            )
-            log.info(f"💳 FamPay auto-verification loop started @{self.username}")
-        except Exception as e:
-            log.exception(f"❌ FamPay auto-verification start failed @{self.username}: {e}")
-        finally:
-            _current_bot.reset(tok)
+        # Payment verification is handled by the external Vercel FamPay API.
+        # No direct IMAP polling is started in the bot.
+        self.fampay_task = None
+        log.info(f"💳 FamPay verification via Vercel API @{self.username}")
 
         await app.start()
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
