@@ -381,14 +381,13 @@ function renderPaymentStatus(oid) {
 }
 
 async function verifyPaymentRef(oid) {
-  const utr = (document.getElementById('utrInput')?.value || '').trim();
-  const txn = (document.getElementById('txnInput')?.value || '').trim();
-  if (!utr && !txn) { toast('Enter UTR or Transaction ID'); return; }
+  const ref = (document.getElementById('paymentRefInput')?.value || '').trim();
+  if (!ref) { toast('Enter UTR or Transaction ID'); return; }
   const btn = document.getElementById('verifyPaymentBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
   try {
     const r = await api('/api/verify-payment', {
-      method:'POST', body:JSON.stringify({order_id:oid, utr:utr || null, txn:txn || null})
+      method:'POST', body:JSON.stringify({order_id:oid, utr:ref, txn:ref})
     });
     if (r.verified && r.status === 'success') {
       toast(`✅ ₹${r.amount || ''} credited successfully!`, 3500);
@@ -447,6 +446,26 @@ async function renderDeposit() {
   );
 }
 
+async function downloadPaymentQR(url, orderId) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('QR download failed');
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = `VILLAGEE_QR_${orderId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    toast('✅ QR downloaded');
+  } catch (e) {
+    // Fallback: open the QR image if the browser blocks blob download.
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
 async function makeDeposit(method, amount) {
   if (!amount || amount < STATE.config.min_deposit) {
     toast(`Minimum ₹${STATE.config.min_deposit}`);
@@ -469,7 +488,7 @@ async function makeDeposit(method, amount) {
           </div>
         </div>
         <div class="upi-id">UPI ID: <b>${esc(r.upi_id)}</b></div>
-        <a class="btn btn-primary" href="${esc(r.upi_url)}">Open UPI App</a>
+        <button class="btn btn-primary" id="downloadQrBtn" type="button">⬇ Download QR</button>
         <div class="payment-meta">
           <div><span>Amount</span><b>${fmt(r.amount)}</b></div>
           <div><span>Order</span><code>${esc(r.order_id)}</code></div>
@@ -477,14 +496,14 @@ async function makeDeposit(method, amount) {
         <div class="verify-box">
           <div class="verify-title">Payment Verification</div>
           <div class="verify-hint">After payment, enter either your UTR or Transaction ID.</div>
-          <input id="utrInput" class="verify-input" type="text" inputmode="numeric" autocomplete="off" placeholder="UTR / UTR Number">
-          <input id="txnInput" class="verify-input" type="text" autocomplete="off" placeholder="Transaction ID (optional)">
+          <input id="paymentRefInput" class="verify-input" type="text" autocomplete="off" placeholder="Enter UTR or Transaction ID">
           <button class="btn btn-success" id="verifyPaymentBtn">Verify UTR / TXN</button>
           <div id="paymentStatus"></div>
         </div>
         <div class="note">Do not submit the same UTR/TXN for another order. Verification only credits the exact order amount.</div>
       </div>`;
     renderPaymentStatus(r.order_id);
+    document.getElementById('downloadQrBtn').onclick = () => downloadPaymentQR(qr, r.order_id);
     document.getElementById('verifyPaymentBtn').onclick = () => verifyPaymentRef(r.order_id);
     if (method === 'auto') pollOrder(r.order_id);
   } catch(e) {
