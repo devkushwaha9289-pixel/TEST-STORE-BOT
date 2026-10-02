@@ -136,11 +136,11 @@ OSINT_NAME_TO_ENDPOINT = {
 
 DAYBREAK_OPTIONS = (1, 7, 14, 30)
 DEFAULT_DAYBREAK = 1
-# Telegram session eligibility: must be older than 24 hours + 1 second.
-SESSION_MIN_AGE_SECONDS = int(os.getenv("SESSION_MIN_AGE_SECONDS", "86401"))
+# Listing eligibility: last edited time must be older than 24 hours.
+LAST_EDIT_MIN_AGE_SECONDS = int(os.getenv("LAST_EDIT_MIN_AGE_SECONDS", "86400"))
 
 # Backward compatibility for existing imports elsewhere in the project.
-ELIGIBILITY_MIN_AGE_SECONDS = SESSION_MIN_AGE_SECONDS
+ELIGIBILITY_MIN_AGE_SECONDS = LAST_EDIT_MIN_AGE_SECONDS
 
 LAST_EDIT_FIELD_CANDIDATES = (
     "last_edit","lastEdit","last_edited","lastEdited","last_edited_at","lastEditedAt",
