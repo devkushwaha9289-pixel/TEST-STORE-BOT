@@ -73,13 +73,23 @@ def set_user_daybreak(uid, value):
     if n not in DAYBREAK_OPTIONS: n = DEFAULT_DAYBREAK
     set_setting(f"lzt_daybreak_{uid}", str(n))
 
-def lzt_item_session_created_ts(item):
-    """Return Telegram session creation timestamp in Unix seconds."""
+def lzt_item_last_edited_ts(item):
+    """Return the listing's last-edited timestamp as Unix seconds.
+
+    Primary LZT field: edit_date. Several fallback field names are supported
+    for compatibility with older API responses.
+    """
     if not isinstance(item, dict):
         return None
 
-    value = item.get("telegram_session_created_at")
-    if value in (None, "", 0, "0", False):
+    value = None
+    for field in ("edit_date",) + tuple(LAST_EDIT_FIELD_CANDIDATES):
+        candidate = item.get(field)
+        if candidate not in (None, "", 0, "0", False):
+            value = candidate
+            break
+
+    if value is None:
         return None
 
     try:
@@ -103,15 +113,14 @@ def lzt_item_session_created_ts(item):
         return None
 
 
-def lzt_item_session_age_seconds(item, now=None):
-    ts = lzt_item_session_created_ts(item)
+def lzt_item_last_edited_age_seconds(item, now=None):
+    ts = lzt_item_last_edited_ts(item)
     if ts is None:
         return None
 
     current = float(time.time() if now is None else now)
     age = current - ts
 
-    # Future timestamps are invalid and must not qualify.
     if age < 0:
         return None
 
@@ -120,16 +129,17 @@ def lzt_item_session_age_seconds(item, now=None):
 
 def lzt_item_age_seconds(item):
     # Backward-compatible name used by the existing UI.
-    return lzt_item_session_age_seconds(item)
+    return lzt_item_last_edited_age_seconds(item)
 
 
 def lzt_item_is_eligible(item):
-    """Eligible only when Telegram session age is > SESSION_MIN_AGE_SECONDS."""
-    age = lzt_item_session_age_seconds(item)
+    """Eligible only when listing last-edited age is > 86400 seconds."""
+    age = lzt_item_last_edited_age_seconds(item)
     if age is None:
         return (False, None)
 
-    return (age > SESSION_MIN_AGE_SECONDS), age
+    return (age > LAST_EDIT_MIN_AGE_SECONDS), age
+
 
 def lzt_currency_to_inr_rate(currency):
     c = str(currency or LZT_PRICE_CURRENCY).strip().lower()
@@ -431,7 +441,7 @@ def filter_lzt_eligible(items):
 
 def get_user_filters(uid):
     db_db = str(get_user_daybreak(uid))
-    default = {"spam":"no","geoblock":"no","offline":db_db,"login_mail":"any","premium":"any","sort":"az"}
+    default = {"spam":"any","geoblock":"no","offline":db_db,"login_mail":"any","premium":"any","sort":"az"}
     if uid not in user_lzt_filters: user_lzt_filters[uid] = default.copy()
     else:
         for k, v in default.items(): user_lzt_filters[uid].setdefault(k, v)
@@ -676,7 +686,7 @@ def resolve_lzt_user_refresh(uid, key):
 # modules resolve safely — every definition above already exists).
 # ============================================================
 from config import (
-    DAYBREAK_OPTIONS, DEFAULT_DAYBREAK, SESSION_MIN_AGE_SECONDS,
+    DAYBREAK_OPTIONS, DEFAULT_DAYBREAK, LAST_EDIT_MIN_AGE_SECONDS,
     LAST_EDIT_FIELD_CANDIDATES, LZT_BASE_URL, LZT_CACHE_BATCH_SIZE, LZT_CACHE_CONCURRENCY,
     LZT_CACHE_IDLE_SECONDS, LZT_FAST_BUY_RETRIES, LZT_FORCE_IPV4, LZT_MAX_RETRIES,
     LZT_MIN_REQUEST_INTERVAL, LZT_PRICE_CURRENCY, LZT_PROXY, LZT_RATE_LIMIT_COOLDOWN,
