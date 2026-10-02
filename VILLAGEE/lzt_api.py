@@ -73,38 +73,68 @@ def set_user_daybreak(uid, value):
     if n not in DAYBREAK_OPTIONS: n = DEFAULT_DAYBREAK
     set_setting(f"lzt_daybreak_{uid}", str(n))
 
-def lzt_item_last_edited_ts(item):
-    if not isinstance(item, dict): return None
-    for key in LAST_EDIT_FIELD_CANDIDATES:
-        v = item.get(key)
-        if v in (None, "", 0, "0", False): continue
-        try:
-            if isinstance(v, (int, float)):
-                fv = float(v)
-                if fv > 1e12: fv = fv / 1000.0
-                if fv > 0: return fv
-            elif isinstance(v, str):
-                try:
-                    dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-                    if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                    return dt.timestamp()
-                except: pass
-                try:
-                    fv = float(v)
-                    if fv > 1e12: fv = fv / 1000.0
-                    if fv > 0: return fv
-                except: pass
-        except: pass
-    return None
+def lzt_item_session_created_ts(item):
+    """Return Telegram session creation timestamp in Unix seconds.
+
+    IMPORTANT: eligibility must use telegram_session_created_at, not
+    marketplace published/edit/refresh timestamps.
+    """
+    if not isinstance(item, dict):
+        return None
+
+    value = item.get("telegram_session_created_at")
+    if value in (None, "", 0, "0", False):
+        return None
+
+    try:
+        if isinstance(value, (int, float)):
+            ts = float(value)
+        else:
+            raw = str(value).strip()
+            try:
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                ts = dt.timestamp()
+            except Exception:
+                ts = float(raw)
+
+        # Accept milliseconds too, although LZT normally returns seconds.
+        if ts > 1e12:
+            ts /= 1000.0
+
+        return ts if ts > 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def lzt_item_session_age_seconds(item, now=None):
+    ts = lzt_item_session_created_ts(item)
+    if ts is None:
+        return None
+
+    current = float(time.time() if now is None else now)
+    age = current - ts
+
+    # Future timestamps are invalid and must never qualify.
+    if age < 0:
+        return None
+
+    return age
+
 
 def lzt_item_age_seconds(item):
-    ts = lzt_item_last_edited_ts(item)
-    return None if ts is None else (time.time() - ts)
+    # Backward-compatible name used by the existing UI.
+    return lzt_item_session_age_seconds(item)
+
 
 def lzt_item_is_eligible(item):
-    age = lzt_item_age_seconds(item)
-    if age is None: return (False, None)
-    return (age > ELIGIBILITY_MIN_AGE_SECONDS), age
+    """Eligible only when Telegram session age is > SESSION_MIN_AGE_SECONDS."""
+    age = lzt_item_session_age_seconds(item)
+    if age is None:
+        return (False, None)
+
+    return (age > SESSION_MIN_AGE_SECONDS), age
 
 def lzt_currency_to_inr_rate(currency):
     c = str(currency or LZT_PRICE_CURRENCY).strip().lower()
@@ -651,7 +681,7 @@ def resolve_lzt_user_refresh(uid, key):
 # modules resolve safely — every definition above already exists).
 # ============================================================
 from config import (
-    DAYBREAK_OPTIONS, DEFAULT_DAYBREAK, ELIGIBILITY_MIN_AGE_SECONDS,
+    DAYBREAK_OPTIONS, DEFAULT_DAYBREAK, SESSION_MIN_AGE_SECONDS,
     LAST_EDIT_FIELD_CANDIDATES, LZT_BASE_URL, LZT_CACHE_BATCH_SIZE, LZT_CACHE_CONCURRENCY,
     LZT_CACHE_IDLE_SECONDS, LZT_FAST_BUY_RETRIES, LZT_FORCE_IPV4, LZT_MAX_RETRIES,
     LZT_MIN_REQUEST_INTERVAL, LZT_PRICE_CURRENCY, LZT_PROXY, LZT_RATE_LIMIT_COOLDOWN,
