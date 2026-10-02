@@ -55,10 +55,10 @@ def resolve_lzt_token():
 
 def _normalize_daybreak(value):
     if value is None:
-        return "any"
+        return DEFAULT_DAYBREAK
     raw = str(value).strip().lower()
     if raw in ("any", "all", ""):
-        return "any"
+        return "any" if raw in ("any", "all") else DEFAULT_DAYBREAK
     try:
         n = int(raw)
     except Exception:
@@ -66,13 +66,13 @@ def _normalize_daybreak(value):
     return n if n in DAYBREAK_OPTIONS else DEFAULT_DAYBREAK
 
 def get_user_daybreak(uid):
-    v = get_setting(f"lzt_daybreak_{uid}", "")
-    if v:
-        return _normalize_daybreak(v)
-    return _normalize_daybreak(get_setting("lzt_default_daybreak", str(DEFAULT_DAYBREAK)))
+    # Deprecated compatibility helper: daybreak is no longer sent to LZT.
+    return "any"
 
 def set_user_daybreak(uid, value):
-    set_setting(f"lzt_daybreak_{uid}", str(_normalize_daybreak(value)))
+    # Deprecated compatibility helper: keep UI/settings compatible, but do not
+    # use this value for LZT stock requests.
+    set_setting(f"lzt_daybreak_{uid}", "any")
 
 def lzt_item_last_edited_ts(item):
     """Return the listing's last-edited timestamp as Unix seconds.
@@ -119,7 +119,14 @@ def lzt_item_last_edited_age_seconds(item, now=None):
     if ts is None:
         return None
 
-    current = float(time.time() if now is None else now)
+    if now is None:
+        server_now = item.get("serverTime") if isinstance(item, dict) else None
+        try:
+            current = float(server_now) if server_now not in (None, "", 0, "0") else time.time()
+        except (TypeError, ValueError):
+            current = time.time()
+    else:
+        current = float(now)
     age = current - ts
 
     if age < 0:
@@ -441,12 +448,15 @@ def filter_lzt_eligible(items):
     return out
 
 def get_user_filters(uid):
-    db_db = str(get_user_daybreak(uid))
-    default = {"spam":"any","geoblock":"no","offline":db_db,"login_mail":"any","premium":"any","sort":"az"}
-    if uid not in user_lzt_filters: user_lzt_filters[uid] = default.copy()
+    # Daybreak/offline is intentionally disabled. Stock eligibility is based
+    # only on edit_date age (> 86400 seconds).
+    default = {"spam":"any","geoblock":"no","offline":"any","login_mail":"any","premium":"any","sort":"az"}
+    if uid not in user_lzt_filters:
+        user_lzt_filters[uid] = default.copy()
     else:
-        for k, v in default.items(): user_lzt_filters[uid].setdefault(k, v)
-        user_lzt_filters[uid]["offline"] = db_db
+        for k, v in default.items():
+            user_lzt_filters[uid].setdefault(k, v)
+        user_lzt_filters[uid]["offline"] = "any"
     return user_lzt_filters[uid]
 
 def get_filter_key(flt):
@@ -464,13 +474,12 @@ async def cache_lzt_stock_loop():
                 parts = fkey.split("_")
                 sp, gb, off, lm, pr = parts[0],parts[1],parts[2],parts[3],parts[4]
                 iso = LZT_COUNTRY_CATALOG.get(cn, ("US","🇺🇸","1"))[0]
-                dbv = _safe_daybreak(off)
+                # IMPORTANT: daybreak is intentionally NOT sent to LZT.
+                # We fetch the country stock first and apply only the local
+                # edit_date age rule below.
                 params = {"country[]":iso,"spam":sp if sp != "any" else None,
                           "nsb":1,"pmin":0.01,"pmax":1000,"page":1,"per_page":40,
                           "password":"no","currency":LZT_PRICE_CURRENCY}
-                # Daybreak "Any" means do not send the daybreak filter at all.
-                if dbv != "any":
-                    params["daybreak"] = dbv
                 if pr != "any": params["premium"] = pr
                 res = await fetch_lzt_stock_response(params, timeout_total=LZT_STOCK_TIMEOUT,
                                                        max_retries=LZT_STOCK_RETRIES)
