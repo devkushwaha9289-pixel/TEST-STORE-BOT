@@ -136,13 +136,10 @@ OSINT_NAME_TO_ENDPOINT = {
 
 DAYBREAK_OPTIONS = (1, 7, 14, 30)
 DEFAULT_DAYBREAK = 1
-ELIGIBILITY_MIN_AGE_SECONDS = 86400
-
-LAST_EDIT_FIELD_CANDIDATES = (
-    "last_edit","lastEdit","last_edited","lastEdited","last_edited_at","lastEditedAt",
-    "edit_at","editAt","edited_at","editedAt","updated_at","updatedAt","date_edit",
-    "dateEdit","date_edited","dateEdited","last_edit_date","lastEditDate",
-)
+# Session eligibility: only telegram_session_created_at is used.
+# A listing is eligible only when the Telegram session is older than 86401 seconds
+# (24 hours + 1 second) by default. Override with SESSION_MIN_AGE_SECONDS if needed.
+SESSION_MIN_AGE_SECONDS = int(os.getenv("SESSION_MIN_AGE_SECONDS", "86401"))
 
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger("villagee")
