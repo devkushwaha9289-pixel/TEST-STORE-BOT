@@ -55,10 +55,10 @@ def resolve_lzt_token():
 
 def _normalize_daybreak(value):
     if value is None:
-        return DEFAULT_DAYBREAK
+        return "any"
     raw = str(value).strip().lower()
     if raw in ("any", "all", ""):
-        return "any" if raw in ("any", "all") else DEFAULT_DAYBREAK
+        return "any"
     try:
         n = int(raw)
     except Exception:
