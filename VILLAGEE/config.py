@@ -134,7 +134,7 @@ OSINT_NAME_TO_ENDPOINT = {
     "MOBILE TO RC": "/vehicle",
 }
 
-DAYBREAK_OPTIONS = (1, 7, 14, 30)
+DAYBREAK_OPTIONS = ("any", 1, 7, 14, 30)
 DEFAULT_DAYBREAK = 1
 # Listing eligibility: last edited time must be older than 24 hours.
 LAST_EDIT_MIN_AGE_SECONDS = int(os.getenv("LAST_EDIT_MIN_AGE_SECONDS", "86400"))
