@@ -74,11 +74,7 @@ def set_user_daybreak(uid, value):
     set_setting(f"lzt_daybreak_{uid}", str(n))
 
 def lzt_item_session_created_ts(item):
-    """Return Telegram session creation timestamp in Unix seconds.
-
-    IMPORTANT: eligibility must use telegram_session_created_at, not
-    marketplace published/edit/refresh timestamps.
-    """
+    """Return Telegram session creation timestamp in Unix seconds."""
     if not isinstance(item, dict):
         return None
 
@@ -99,7 +95,6 @@ def lzt_item_session_created_ts(item):
             except Exception:
                 ts = float(raw)
 
-        # Accept milliseconds too, although LZT normally returns seconds.
         if ts > 1e12:
             ts /= 1000.0
 
@@ -116,7 +111,7 @@ def lzt_item_session_age_seconds(item, now=None):
     current = float(time.time() if now is None else now)
     age = current - ts
 
-    # Future timestamps are invalid and must never qualify.
+    # Future timestamps are invalid and must not qualify.
     if age < 0:
         return None
 
