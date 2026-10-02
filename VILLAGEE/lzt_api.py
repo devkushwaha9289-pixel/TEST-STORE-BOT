@@ -53,25 +53,26 @@ def resolve_lzt_token():
     except: pass
     return ""
 
+def _normalize_daybreak(value):
+    if value is None:
+        return DEFAULT_DAYBREAK
+    raw = str(value).strip().lower()
+    if raw in ("any", "all", ""):
+        return "any" if raw in ("any", "all") else DEFAULT_DAYBREAK
+    try:
+        n = int(raw)
+    except Exception:
+        return DEFAULT_DAYBREAK
+    return n if n in DAYBREAK_OPTIONS else DEFAULT_DAYBREAK
+
 def get_user_daybreak(uid):
-    try:
-        v = get_setting(f"lzt_daybreak_{uid}", "")
-        if v:
-            n = int(v)
-            if n in DAYBREAK_OPTIONS: return n
-    except: pass
-    try:
-        v2 = get_setting("lzt_default_daybreak", str(DEFAULT_DAYBREAK))
-        n2 = int(v2)
-        if n2 in DAYBREAK_OPTIONS: return n2
-    except: pass
-    return DEFAULT_DAYBREAK
+    v = get_setting(f"lzt_daybreak_{uid}", "")
+    if v:
+        return _normalize_daybreak(v)
+    return _normalize_daybreak(get_setting("lzt_default_daybreak", str(DEFAULT_DAYBREAK)))
 
 def set_user_daybreak(uid, value):
-    try: n = int(value)
-    except: n = DEFAULT_DAYBREAK
-    if n not in DAYBREAK_OPTIONS: n = DEFAULT_DAYBREAK
-    set_setting(f"lzt_daybreak_{uid}", str(n))
+    set_setting(f"lzt_daybreak_{uid}", str(_normalize_daybreak(value)))
 
 def lzt_item_last_edited_ts(item):
     """Return the listing's last-edited timestamp as Unix seconds.
@@ -452,9 +453,7 @@ def get_filter_key(flt):
     return "_".join(str(flt.get(k,"any")) for k in ("spam","geoblock","offline","login_mail","premium"))
 
 def _safe_daybreak(v):
-    try: n = int(v)
-    except: return DEFAULT_DAYBREAK
-    return n if n in DAYBREAK_OPTIONS else DEFAULT_DAYBREAK
+    return _normalize_daybreak(v)
 
 async def cache_lzt_stock_loop():
     global cached_lzt_stock
@@ -468,7 +467,10 @@ async def cache_lzt_stock_loop():
                 dbv = _safe_daybreak(off)
                 params = {"country[]":iso,"spam":sp if sp != "any" else None,
                           "nsb":1,"pmin":0.01,"pmax":1000,"page":1,"per_page":40,
-                          "password":"no","currency":LZT_PRICE_CURRENCY,"daybreak":dbv}
+                          "password":"no","currency":LZT_PRICE_CURRENCY}
+                # Daybreak "Any" means do not send the daybreak filter at all.
+                if dbv != "any":
+                    params["daybreak"] = dbv
                 if pr != "any": params["premium"] = pr
                 res = await fetch_lzt_stock_response(params, timeout_total=LZT_STOCK_TIMEOUT,
                                                        max_retries=LZT_STOCK_RETRIES)
