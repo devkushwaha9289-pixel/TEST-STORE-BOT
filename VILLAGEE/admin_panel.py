@@ -219,6 +219,8 @@ async def view_admin_gmail_menu(update):
     ea = get_setting('gmail_email','') or "NOT SET"
     upi = get_fampay_upi_id()
     manual_upi = get_manual_upi_id()
+    paytm_upi = get_paytm_upi_id()
+    paytm_mid = get_paytm_mid()
     pw = get_setting('gmail_app_password','')
     pwd = "✅ SET" if pw.strip() else "❌ NOT SET"
     en = is_gmail_verify_enabled()
@@ -234,8 +236,10 @@ async def view_admin_gmail_menu(update):
         [ibtn("📅 TODAY TX","adm_tx_today",emoji="📅",style="success")],
         [ibtn("📆 MONTH TX","adm_tx_month",emoji="📆",style="success")],
         [ibtn("SET EMAIL","adm_gmail_set_email",emoji="📧",style="primary")],
-        [ibtn("SET UPI AUTO","adm_gmail_set_upi",emoji="🏦",style="primary"),
-         ibtn("SET UPI MANUAL","adm_manual_upi_set",emoji="📄",style="success")],
+        [ibtn("SET FAMPAY UPI","adm_gmail_set_upi",emoji="🏦",style="primary"),
+         ibtn("SET MANUAL UPI","adm_manual_upi_set",emoji="📄",style="success")],
+        [ibtn("SET PAYTM UPI","adm_paytm_set_upi",emoji="💳",style="primary"),
+         ibtn("SET PAYTM MID","adm_paytm_set_mid",emoji="🆔",style="primary")],
         [ibtn("SET PWD","adm_gmail_set_pw",emoji="🔑",style="primary")],
         [ibtn(f"{'DISABLE' if en else 'ENABLE'}","adm_gmail_toggle",emoji="🟢",
               style="danger" if en else "success")],
@@ -244,9 +248,11 @@ async def view_admin_gmail_menu(update):
         [ibtn("MISMATCH","adm_gmail_mismatches",emoji="⚠️",style="danger"),
          ibtn("DUPES","adm_gmail_duplicates",emoji="🚫",style="danger")],
         [ibtn("BACK","admin_panel",emoji="🔙",style="primary")]]
-    await send_rich_async(uid, [make_heading("📧 FAMPAY AUTO + MANUAL UPI", 2),
-        make_paragraph("Auto reads FamPay emails via IMAP. Manual UPI goes to OWNER DM."),
-        make_table([["⚙️ SETTING","📋 VALUE"],["📧 Email", ea[:35]],["🏦 UPI Auto", upi[:35]],
+    await send_rich_async(uid, [make_heading("📧 FAMPAY + 💳 PAYTM AUTOMATIC + MANUAL UPI", 2),
+        make_paragraph("Payment IDs and Paytm MID are GLOBAL and shared by every configured bot."),
+        make_table([["⚙️ SETTING","📋 VALUE"],["📧 Email", ea[:35]],["🏦 FamPay UPI", upi[:35]],
+                    ["💳 Paytm UPI", paytm_upi[:35] if paytm_upi else "❌ NOT SET"],
+                    ["🆔 Paytm MID", paytm_mid[:35] if paytm_mid else "❌ NOT SET"],
                     ["📄 UPI Manual", manual_upi[:35]],
                     ["🔑 Pwd", pwd],["🟢 Auto", "YES" if en else "NO"],
                     ["📥 Stored", str(te)],["✅ Matched", str(mt)],["⚠️ Mism", str(mm)],
@@ -543,6 +549,7 @@ from config import (
 from context import cur, db
 from database import (
     get_fampay_upi_id, get_manual_upi_id, get_min_deposit, get_setting, is_admin,
+    get_paytm_upi_id, get_paytm_mid,
     is_bot_online, is_buy2_online, is_buy3_online, is_gmail_verify_enabled, is_master_owner,
     is_owner, is_server1_online, is_upi_online, is_wa_online, safe_get
 )
