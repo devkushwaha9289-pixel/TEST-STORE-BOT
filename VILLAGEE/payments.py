@@ -48,15 +48,20 @@ async def complete_upi_order(oid, uid, amount, qr_msg_id=None, source="fampay_ap
     if not qr_msg_id:
         qr = cur.execute("SELECT qr_msg_id FROM upi_orders WHERE order_id=?", (oid,)).fetchone()
         qr_msg_id = qr["qr_msg_id"] if qr else None
+    source_label = {
+        "fampay_api": "FamPay Auto",
+        "fampay_imap": "FamPay Auto",
+        "paytm_api": "Paytm Auto",
+    }.get(source, source)
     succ = (f"<b>{emo('✅')} PAYMENT VERIFIED</b>\n\n"
             f"{emo('🆔')} Order: <code>{oid}</code>\n"
             f"{emo('💰')} Added: <b>₹{amount}</b>\n"
             f"{emo('💼')} Old: ₹{old}\n{emo('💬')} New: ₹{new}\n\n"
-            f"<i>Source: FamPay Auto • {_now_str()}</i>")
+            f"<i>Source: {source_label} • {_now_str()}</i>")
     try:
         if qr_msg_id: await _tg_post("deleteMessage", {"chat_id": uid, "message_id": qr_msg_id})
     except: pass
-    try: await log_deposit(uid, amount, "UPI (FamPay Auto)", "approved", dep_id=oid, utr=utr or txn)
+    try: await log_deposit(uid, amount, f"UPI ({source_label})", "approved", dep_id=oid, utr=utr or txn)
     except: pass
     try: await process_referral_bonus(uid, amount)
     except: pass
