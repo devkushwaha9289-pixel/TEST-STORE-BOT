@@ -172,6 +172,22 @@ async def ping():
 # ============================================================
 # AUTH
 # ============================================================
+def _is_admin_db(con, uid, bot):
+    try:
+        from context import MASTER_OWNER_ID
+    except Exception:
+        MASTER_OWNER_ID = 0
+    try:
+        if int(uid) == int(MASTER_OWNER_ID) or int(uid) == int(bot.get("owner_id") or 0):
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(con.execute("SELECT 1 FROM admins WHERE user_id=?", (uid,)).fetchone())
+    except Exception:
+        return False
+
+
 async def auth(
     x_bot_username: str = Header(..., alias="X-Bot-Username"),
     x_init_data:    str = Header(..., alias="X-Init-Data"),
@@ -182,7 +198,46 @@ async def auth(
     user = validate_init(x_init_data, bot["token"])
     if not user:
         raise HTTPException(401, "Invalid initData")
+    # initData must be fresh (24h) so a leaked string cannot be replayed forever
+    try:
+        ad = int(dict(parse_qsl(x_init_data)).get("auth_date", "0"))
+        if ad and time.time() - ad > 86400:
+            raise HTTPException(401, "Session expired. Reopen the Mini App.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    # ban + maintenance gate (same rules as the bot)
+    con = open_db(x_bot_username)
+    if con:
+        try:
+            r = con.execute("SELECT banned FROM users WHERE user_id=?", (user["id"],)).fetchone()
+            if r and r["banned"] == 1:
+                raise HTTPException(403, "You are banned from this store.")
+            if gs(con, "bot_status", "on") != "on" and not _is_admin_db(con, user["id"], bot):
+                raise HTTPException(503, "Store is under maintenance. Try again later.")
+        finally:
+            con.close()
     return {"user": user, "bot": bot, "un": x_bot_username}
+
+
+def _require_on(un: str, key: str, label: str):
+    con = open_db(un)
+    if not con:
+        raise HTTPException(500, "DB missing")
+    try:
+        if gs(con, key, "on") != "on":
+            raise HTTPException(400, f"{label} is currently disabled")
+    finally:
+        con.close()
+
+
+async def bridge(a, fn_name: str, *args):
+    """Run miniapp_bridge.<fn_name>(uid, *args) in the owning bot context."""
+    import miniapp_bridge as mb
+    fn = getattr(mb, fn_name)
+    uid = a["user"]["id"]
+    return await run_in_bot_context(a["un"], lambda: fn(uid, *args))
 
 
 async def run_in_bot_context(username: str, coro_factory):
@@ -218,29 +273,34 @@ async def run_in_bot_context(username: str, coro_factory):
 # ============================================================
 @app.get("/api/config")
 async def api_config(a=Depends(auth)):
+    try:
+        cfg = await bridge(a, "mini_config")
+        cfg["qr_provider"] = "https://api.qrserver.com/v1/create-qr-code/"
+        return cfg
+    except HTTPException as he:
+        if he.status_code != 503:
+            raise
+    # bot not ready yet -> minimal read-only fallback
     con = open_db(a["un"])
     if not con:
         raise HTTPException(500, "DB missing")
     try:
+        on = lambda k, d="on": gs(con, k, d) == "on"
         return {
-            "store_name":  "VILLAGEE SMS SHOP",
+            "store_name": "VILLAGEE SMS SHOP",
             "support_url": gs(con, "support_url", "https://t.me/Z4X_Silent_Boy"),
+            "contact_1": gs(con, "contact_1", ""), "contact_2": gs(con, "contact_2", ""),
             "min_deposit": int(float(gs(con, "min_deposit", "10"))),
-            "usdt_rate":   float(gs(con, "usdt_rate", "90")),
-            "upi_manual":  gs(con, "manual_upi_id", ""),
-            "upi_auto":    gs(con, "fampay_upi_id", ""),
-            "bot_status":  gs(con, "bot_status", "on"),
-            "buy1":        gs(con, "buy1_status", "on"),
-            "buy2":        gs(con, "buy2_status", "on"),
-            "buy3":        gs(con, "buy3_status", "on"),
+            "usdt_rate": float(gs(con, "usdt_rate", "90")),
+            "transfer_fee": int(float(gs(con, "transfer_fee", "10"))),
+            "upi_manual": gs(con, "manual_upi_id", ""), "upi_auto": gs(con, "fampay_upi_id", ""),
+            "bot_status": gs(con, "bot_status", "on"),
+            "is_admin": _is_admin_db(con, a["user"]["id"], a["bot"]), "is_owner": False,
+            "features": {"server1": on("buy1_status"), "server2": on("buy2_status"),
+                         "server3": on("buy3_status"), "whatsapp": on("wa_status", "soon"),
+                         "wallet": on("upi_status"), "fampay": on("fampay_status"),
+                         "paytm": False, "manual": on("manual_upi_status"), "referral": True},
             "qr_provider": "https://api.qrserver.com/v1/create-qr-code/",
-            "features": {
-                "server1": gs(con, "buy1_status", "on") == "on",
-                "server2": gs(con, "buy2_status", "on") == "on",
-                "server3": gs(con, "buy3_status", "on") == "on",
-                "wallet": gs(con, "upi_status", "on") == "on",
-                "referral": True,
-            },
         }
     finally:
         con.close()
@@ -408,6 +468,7 @@ async def api_purchase(req: PurchaseReq, a=Depends(auth)):
     phone = (req.phone or "").strip()
     if not phone:
         raise HTTPException(400, "Phone is required")
+    _require_on(a["un"], "buy2_status", "Server 2")
 
     # IMPORTANT: the real Telegram purchase worker performs the debit, stock
     # reservation, Telethon validation and auto-OTP setup. Do not duplicate
@@ -429,6 +490,7 @@ class FilePurchaseReq(BaseModel):
 
 @app.post("/api/purchase/file")
 async def api_purchase_file(req: FilePurchaseReq, a=Depends(auth)):
+    _require_on(a["un"], "buy3_status", "Server 3")
     try:
         from server3 import process_file_purchase_from_miniapp
         return await run_in_bot_context(
@@ -491,13 +553,19 @@ async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
     try:
         # IMPORTANT: amount is taken from DB by order_id, never from the client.
         order = con.execute(
-            "SELECT order_id, user_id, amount, status FROM upi_orders WHERE order_id=? AND user_id=?",
+            "SELECT order_id, user_id, amount, status, provider, verified_via FROM upi_orders WHERE order_id=? AND user_id=?",
             (req.order_id, uid),
         ).fetchone()
         if not order:
             raise HTTPException(404, "Payment order not found")
         if order["status"] == "success":
             return {"verified": True, "status": "success", "message": "Already credited"}
+        if str(order["provider"] or "fampay").lower() == "paytm":
+            raise HTTPException(400, "Paytm orders verify automatically. Use 'Check payment'.")
+        if order["verified_via"] == "manual_upi" or order["status"] == "manual_pending":
+            raise HTTPException(400, "Manual UPI orders are approved by admin after you submit the UTR.")
+        if order["status"] != "pending":
+            raise HTTPException(400, f"Order is {order['status']}")
         if order["status"] in ("failed", "mismatch", "duplicate"):
             raise HTTPException(400, f"Order is {order['status']}")
 
@@ -622,77 +690,37 @@ async def api_verify_payment(req: PaymentVerifyReq, a=Depends(auth)):
         con.close()
 
 # ============================================================
-# DEPOSITS
+# DEPOSITS  (all go through the bot logic -> same wallet/locks/checkers)
 # ============================================================
 class DepositReq(BaseModel):
     amount: int
 
-@app.post("/api/deposit/manual")
-async def api_dep_manual(req: DepositReq, a=Depends(auth)):
-    uid = a["user"]["id"]
-    con = open_db(a["un"])
-    if not con:
-        raise HTTPException(500, "DB missing")
-    try:
-        min_d = int(float(gs(con, "min_deposit", "10")))
-        if req.amount < min_d:
-            raise HTTPException(400, f"Min ₹{min_d}")
-        upi = gs(con, "manual_upi_id", "")
-        if not upi:
-            raise HTTPException(400, "Manual UPI not configured")
-        oid = gen_oid()
-        con.execute("""
-            INSERT INTO upi_orders
-            (order_id, user_id, amount, status, created_ts, verified_via)
-            VALUES (?,?,?,?,?,?)
-        """, (oid, uid, req.amount, "pending", time.time(), "manual_upi"))
-        con.execute("""
-            INSERT OR REPLACE INTO manual_upi_orders
-            (order_id, user_id, amount, status, created_ts)
-            VALUES (?,?,?,?,?)
-        """, (oid, uid, req.amount, "pending", time.time()))
-        con.commit()
-        return {
-            "ok": True,
-            "order_id": oid,
-            "upi_id": upi,
-            "amount": req.amount,
-            "upi_url": upi_url(upi, req.amount, oid, UPI_NAME),
-            "instructions": "Pay the exact amount, then enter UTR or Transaction ID below.",
-        }
-    finally:
-        con.close()
+@app.post("/api/deposit/paytm")
+async def api_dep_paytm(req: DepositReq, a=Depends(auth)):
+    return await bridge(a, "mini_deposit_paytm", req.amount)
 
 @app.post("/api/deposit/auto")
 async def api_dep_auto(req: DepositReq, a=Depends(auth)):
-    uid = a["user"]["id"]
-    con = open_db(a["un"])
-    if not con:
-        raise HTTPException(500, "DB missing")
-    try:
-        min_d = int(float(gs(con, "min_deposit", "10")))
-        if req.amount < min_d:
-            raise HTTPException(400, f"Min ₹{min_d}")
-        upi = gs(con, "fampay_upi_id", "")
-        if not upi:
-            raise HTTPException(400, "Auto UPI not configured")
-        oid = gen_oid()
-        con.execute("""
-            INSERT INTO upi_orders
-            (order_id, user_id, amount, status, created_ts, verified_via)
-            VALUES (?,?,?,?,?,?)
-        """, (oid, uid, req.amount, "pending", time.time(), "fampay_auto"))
-        con.commit()
-        return {
-            "ok": True,
-            "order_id": oid,
-            "upi_id": upi,
-            "amount": req.amount,
-            "upi_url": upi_url(upi, req.amount, oid, UPI_NAME),
-            "poll": True,
-        }
-    finally:
-        con.close()
+    return await bridge(a, "mini_deposit_fampay", req.amount)
+
+@app.post("/api/deposit/manual")
+async def api_dep_manual(req: DepositReq, a=Depends(auth)):
+    return await bridge(a, "mini_deposit_manual", req.amount)
+
+class ManualSubmitReq(BaseModel):
+    order_id: str
+    utr: str
+
+@app.post("/api/deposit/manual/submit")
+async def api_dep_manual_submit(req: ManualSubmitReq, a=Depends(auth)):
+    return await bridge(a, "mini_manual_submit", req.order_id, req.utr)
+
+class OrderReq(BaseModel):
+    order_id: str
+
+@app.post("/api/paytm/check")
+async def api_paytm_check(req: OrderReq, a=Depends(auth)):
+    return await bridge(a, "mini_check_paytm", req.order_id)
 
 @app.get("/api/order/{oid}")
 async def api_order(oid: str, a=Depends(auth)):
@@ -702,7 +730,7 @@ async def api_order(oid: str, a=Depends(auth)):
         raise HTTPException(500, "DB missing")
     try:
         r = con.execute(
-            "SELECT status, amount FROM upi_orders WHERE order_id=? AND user_id=?",
+            "SELECT status, amount, provider FROM upi_orders WHERE order_id=? AND user_id=?",
             (oid, uid),
         ).fetchone()
         return dict(r) if r else {"status": "unknown"}
@@ -736,20 +764,18 @@ async def api_deposit_history(a=Depends(auth)):
         raise HTTPException(500, "DB missing")
     try:
         rows = con.execute("""
-            SELECT amount, method_name, status, date
-            FROM deposits WHERE user_id=? ORDER BY id DESC LIMIT 50
-        """, (uid,)).fetchall()
-        auto_rows = con.execute("""
-            SELECT amount, 'UPI AUTO' AS method_name, status, date
-            FROM upi_orders WHERE user_id=? ORDER BY date DESC LIMIT 50
-        """, (uid,)).fetchall()
-        manual_rows = con.execute("""
-            SELECT amount, 'UPI MANUAL' AS method_name, status, date
-            FROM manual_upi_orders WHERE user_id=? ORDER BY date DESC LIMIT 50
-        """, (uid,)).fetchall()
-        merged = [dict(r) for r in rows] + [dict(r) for r in auto_rows] + [dict(r) for r in manual_rows]
-        merged.sort(key=lambda x: str(x.get('date') or ''), reverse=True)
-        return merged[:50]
+            SELECT amount, method_name, status, date FROM deposits
+            WHERE user_id=? ORDER BY id DESC LIMIT 50""", (uid,)).fetchall()
+        upi = con.execute("""
+            SELECT amount,
+                   CASE WHEN LOWER(COALESCE(provider,''))='paytm' THEN 'PAYTM AUTO'
+                        WHEN verified_via LIKE 'manual_upi%' THEN 'UPI MANUAL'
+                        ELSE 'FAMPAY AUTO' END AS method_name,
+                   status, date, order_id
+            FROM upi_orders WHERE user_id=? ORDER BY created_ts DESC LIMIT 50""", (uid,)).fetchall()
+        merged = [dict(r) for r in rows] + [dict(r) for r in upi]
+        merged.sort(key=lambda x: str(x.get("date") or ""), reverse=True)
+        return merged[:60]
     finally:
         con.close()
 
@@ -798,6 +824,150 @@ async def api_referral_history(a=Depends(auth)):
 async def api_refer(a=Depends(auth)):
     uid = a["user"]["id"]
     return {"link": f"https://t.me/{a['un']}?start=REF{uid}"}
+
+
+# ============================================================
+# REDEEM / TRANSFER / BALANCE HISTORY
+# ============================================================
+class RedeemReq(BaseModel):
+    code: str
+
+@app.post("/api/redeem")
+async def api_redeem(req: RedeemReq, a=Depends(auth)):
+    return await bridge(a, "mini_redeem", req.code)
+
+class LookupReq(BaseModel):
+    to_uid: int
+
+@app.post("/api/transfer/lookup")
+async def api_transfer_lookup(req: LookupReq, a=Depends(auth)):
+    return await bridge(a, "mini_transfer_lookup", req.to_uid)
+
+class TransferReq(BaseModel):
+    to_uid: int
+    amount: int
+
+@app.post("/api/transfer")
+async def api_transfer(req: TransferReq, a=Depends(auth)):
+    return await bridge(a, "mini_transfer", req.to_uid, req.amount)
+
+@app.get("/api/balance-history")
+async def api_balance_history(a=Depends(auth)):
+    return await bridge(a, "mini_balance_history")
+
+
+# ============================================================
+# ADMIN  (every call re-checks admin rights inside the bot context)
+# ============================================================
+class KeyReq(BaseModel):
+    key: str
+
+class KeyValReq(BaseModel):
+    key: str
+    value: str
+
+class TargetReq(BaseModel):
+    target: str
+
+class BalanceReq(BaseModel):
+    user_id: int
+    amount: int
+    mode: str
+
+class BanReq(BaseModel):
+    user_id: int
+    banned: bool
+
+class DecideReq(BaseModel):
+    order_id: str
+    action: str
+    reason: Optional[str] = ""
+
+class CouponReq(BaseModel):
+    code: str
+    amount: int = 0
+    max_uses: int = 1
+
+class ProductReq(BaseModel):
+    id: int
+    action: str
+    value: Optional[str] = None
+
+class StockPriceReq(BaseModel):
+    category: str
+    country: str
+    price: int
+
+class BroadcastReq(BaseModel):
+    text: str
+
+@app.get("/api/admin/overview")
+async def api_admin_overview(a=Depends(auth)):
+    return await bridge(a, "mini_admin_overview")
+
+@app.post("/api/admin/toggle")
+async def api_admin_toggle(req: KeyReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_toggle", req.key)
+
+@app.post("/api/admin/payment")
+async def api_admin_payment(req: KeyValReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_set_payment", req.key, req.value)
+
+@app.post("/api/admin/setting")
+async def api_admin_setting(req: KeyValReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_set_setting", req.key, req.value)
+
+@app.post("/api/admin/user")
+async def api_admin_user(req: TargetReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_user", req.target)
+
+@app.post("/api/admin/balance")
+async def api_admin_balance(req: BalanceReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_balance", req.user_id, req.amount, req.mode)
+
+@app.post("/api/admin/ban")
+async def api_admin_ban(req: BanReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_ban", req.user_id, req.banned)
+
+@app.get("/api/admin/manual")
+async def api_admin_manual(a=Depends(auth)):
+    return await bridge(a, "mini_admin_manual_list")
+
+@app.post("/api/admin/manual/decide")
+async def api_admin_manual_decide(req: DecideReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_manual_decide", req.order_id, req.action, req.reason or "")
+
+@app.get("/api/admin/coupons")
+async def api_admin_coupons(a=Depends(auth)):
+    return await bridge(a, "mini_admin_coupons")
+
+@app.post("/api/admin/coupons/add")
+async def api_admin_coupon_add(req: CouponReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_coupon_add", req.code, req.amount, req.max_uses)
+
+@app.post("/api/admin/coupons/delete")
+async def api_admin_coupon_delete(req: CouponReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_coupon_delete", req.code)
+
+@app.get("/api/admin/products")
+async def api_admin_products(a=Depends(auth)):
+    return await bridge(a, "mini_admin_products")
+
+@app.post("/api/admin/products/update")
+async def api_admin_product_update(req: ProductReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_product_update", req.id, req.action, req.value)
+
+@app.get("/api/admin/stock")
+async def api_admin_stock(a=Depends(auth)):
+    return await bridge(a, "mini_admin_stock")
+
+@app.post("/api/admin/stock/price")
+async def api_admin_stock_price(req: StockPriceReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_stock_price", req.category, req.country, req.price)
+
+@app.post("/api/admin/broadcast")
+async def api_admin_broadcast(req: BroadcastReq, a=Depends(auth)):
+    return await bridge(a, "mini_admin_broadcast", req.text)
 
 
 # ============================================================
