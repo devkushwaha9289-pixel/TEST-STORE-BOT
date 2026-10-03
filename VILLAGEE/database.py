@@ -55,6 +55,7 @@ def _init_schema():
         order_id TEXT PRIMARY KEY, user_id INTEGER, amount INTEGER,
         status TEXT, qr_msg_id INTEGER DEFAULT 0, utr TEXT, txn_id TEXT,
         verified_via TEXT, created_ts REAL, paid_amount REAL,
+        provider TEXT DEFAULT 'fampay',
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS gmail_processed (
@@ -129,6 +130,7 @@ def _init_schema():
     """)
     db.commit()
     _ensure_col("orders", "section", "TEXT DEFAULT 'SERVER2'")
+    _ensure_col("upi_orders", "provider", "TEXT DEFAULT 'fampay'")
     _ensure_col("file_products", "added_date", "TIMESTAMP")
     _ensure_col("file_products", "item_code", "TEXT")
     _ensure_col("file_products", "api_endpoint", "TEXT")
@@ -256,13 +258,44 @@ def is_upi_online(): return get_setting('upi_status','on') == 'on'
 def is_gmail_verify_enabled(): return get_setting('gmail_verify_enabled','on') == 'on'
 def is_server1_online(): return get_setting('server1_status','on') == 'on'
 
+# GLOBAL PAYMENT SETTINGS
+_GLOBAL_PAYMENT_FILE = "global_payment_settings.json"
+def _global_payment_get():
+    import json
+    try:
+        with open(_GLOBAL_PAYMENT_FILE, "r", encoding="utf-8") as f:
+            d=json.load(f); return d if isinstance(d,dict) else {}
+    except Exception: return {}
+def set_global_payment_setting(key, value):
+    import json, os
+    d=_global_payment_get(); d[key]=str(value).strip()
+    tmp=_GLOBAL_PAYMENT_FILE+".tmp"
+    with open(tmp,"w",encoding="utf-8") as f: json.dump(d,f,indent=2,ensure_ascii=False)
+    os.replace(tmp,_GLOBAL_PAYMENT_FILE)
+def get_global_payment_setting(key, default=""):
+    return _global_payment_get().get(key, default)
+
 def get_fampay_upi_id():
+    v = get_global_payment_setting('fampay_upi_id', '').strip()
+    if v: return v
     v = get_setting('fampay_upi_id', DEFAULT_UPI_PAY_ID).strip()
     return v or DEFAULT_UPI_PAY_ID
 
 def get_manual_upi_id():
     v = get_setting('manual_upi_id', DEFAULT_MANUAL_UPI_ID).strip()
     return v or DEFAULT_MANUAL_UPI_ID
+
+def get_paytm_upi_id():
+    v = get_global_payment_setting('paytm_upi_id', '').strip()
+    if v: return v
+    v = get_setting('paytm_upi_id', '').strip()
+    return v or os.getenv('PAYTM_UPI_ID', '').strip()
+
+def get_paytm_mid():
+    v = get_global_payment_setting('paytm_mid', '').strip()
+    if v: return v
+    v = get_setting('paytm_mid', '').strip()
+    return v or os.getenv('PAYTM_MID', '').strip()
 
 def get_transfer_fee():
     try: return int(get_setting('transfer_fee', '10'))
