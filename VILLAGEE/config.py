@@ -70,8 +70,8 @@ UPI_VERIFY_WINDOW_SECONDS = 900
 
 # Paytm Automatic UPI
 PAYTM_STATUS_URL = os.getenv("PAYTM_STATUS_URL", "https://securegw.paytm.in/merchant-status/getTxnStatus")
-PAYTM_MID = os.getenv("PAYTM_MID", "").strip()
-PAYTM_UPI_ID = os.getenv("PAYTM_UPI_ID", "").strip()
+PAYTM_MID = os.getenv("PAYTM_MID", "AxEwQB85150250015921").strip()
+PAYTM_UPI_ID = os.getenv("PAYTM_UPI_ID", "paytm.s2y5t5z@pty").strip()
 PAYTM_MERCHANT_NAME = os.getenv("PAYTM_MERCHANT_NAME", "Paytm Merchant").strip()
 PAYTM_VERIFY_INTERVAL = float(os.getenv("PAYTM_VERIFY_INTERVAL", "10"))
 PAYTM_REQUEST_TIMEOUT = float(os.getenv("PAYTM_REQUEST_TIMEOUT", "10"))
