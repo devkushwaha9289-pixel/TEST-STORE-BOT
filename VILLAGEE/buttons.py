@@ -60,6 +60,11 @@ BTN_MAINMENU = "MAIN MENU"
 BTN_ADMIN = "ADMIN PANEL"
 
 def main_reply_kb(uid=None):
+    # Legacy name kept for compatibility; payment/admin UI is inline-only.
+    return main_inline_kb(uid)
+
+
+def _legacy_main_reply_kb(uid=None):
     try:
         rows = [
             [rbtn(BTN_BUY1, style="primary", custom_id=SERVER_EMOJI_IDS["s1"]),
@@ -94,6 +99,13 @@ def main_reply_kb(uid=None):
         return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
 
 def redeem_reply_kb():
+    # Legacy name kept for compatibility; no Telegram reply keyboard is used.
+    return InlineKeyboardMarkup([[ibtn("CANCEL", "cancel", emoji="❌", style="danger")],
+                                 [ibtn("BALANCE", "balance", emoji="💰", style="primary"),
+                                  ibtn("RECHARGE", "recharge", emoji="➕", style="success")]])
+
+
+def _legacy_redeem_reply_kb():
     try:
         return ReplyKeyboardMarkup([[rbtn(BTN_CANCEL, "❌", "danger")],
                                      [rbtn(BTN_BALANCE, style="primary", custom_id=BALANCE_PREMIUM_EMOJI_ID),
