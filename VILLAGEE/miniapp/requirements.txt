@@ -1,4 +1,9 @@
+Pillow
+aiohttp
 fastapi
-uvicorn[standard]
 pydantic
+pypng
 python-multipart
+qrcode[pil]
+requests
+uvicorn[standard]

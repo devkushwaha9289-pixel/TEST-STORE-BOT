@@ -287,7 +287,8 @@ async def api_config(a=Depends(auth)):
     try:
         on = lambda k, d="on": gs(con, k, d) == "on"
         return {
-            "store_name": "VILLAGEE SMS SHOP",
+            "store_name": (gs(con, "store_name", "") or gs(con, "bot_display_name", "") or a["un"]).strip(),
+            "store_logo": (gs(con, "store_logo", "") or "https://i.ibb.co/pvYN5StT/file-00000000495071fa9b861c6819feb241.png").strip(),
             "support_url": gs(con, "support_url", "https://t.me/Z4X_Silent_Boy"),
             "contact_1": gs(con, "contact_1", ""), "contact_2": gs(con, "contact_2", ""),
             "min_deposit": int(float(gs(con, "min_deposit", "10"))),
