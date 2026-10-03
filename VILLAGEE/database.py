@@ -134,6 +134,35 @@ def _init_schema():
     _ensure_col("file_products", "added_date", "TIMESTAMP")
     _ensure_col("file_products", "item_code", "TEXT")
     _ensure_col("file_products", "api_endpoint", "TEXT")
+
+    # Prevent concurrent/repeated button taps from creating multiple live
+    # orders for the same user/provider/amount. Keep the newest pending row.
+    try:
+        dup_rows = cur.execute("""
+            SELECT user_id, LOWER(COALESCE(provider,'fampay')) AS provider, amount,
+                   GROUP_CONCAT(order_id) AS ids, COUNT(*) AS n
+            FROM upi_orders
+            WHERE status IN ('pending','manual_pending')
+            GROUP BY user_id, LOWER(COALESCE(provider,'fampay')), amount
+            HAVING COUNT(*) > 1
+        """).fetchall()
+        for g in dup_rows:
+            ids = [x for x in str(g['ids']).split(',') if x]
+            keep = cur.execute(
+                "SELECT order_id FROM upi_orders WHERE user_id=? AND LOWER(COALESCE(provider,'fampay'))=LOWER(?) AND amount=? AND status IN ('pending','manual_pending') ORDER BY created_ts DESC LIMIT 1",
+                (g['user_id'], g['provider'], g['amount'])
+            ).fetchone()
+            keep_id = keep['order_id'] if keep else ids[-1]
+            for oid in ids:
+                if oid != keep_id:
+                    cur.execute("UPDATE upi_orders SET status='superseded' WHERE order_id=? AND status IN ('pending','manual_pending')", (oid,))
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_upi_one_live_order
+            ON upi_orders(user_id, provider, amount)
+            WHERE status IN ('pending','manual_pending')
+        """)
+    except Exception as e:
+        log.warning(f"upi live-order uniqueness setup: {e}")
     db.commit()
 
     if cur.execute("SELECT COUNT(*) FROM log_targets").fetchone()[0] == 0:
@@ -224,7 +253,7 @@ def _init_schema():
                  ('min_deposit', str(DEFAULT_MIN_DEPOSIT)),('lzt_token',''),
                  ('osint_owner_id',''),('osint_secret_key',''),
                  ('osint_base_url', OSINT_DEFAULT_BASE_URL),('osint_docs_file_id',''),
-                 ('manual_upi_id', DEFAULT_MANUAL_UPI_ID)]:
+                 ('manual_upi_id', DEFAULT_MANUAL_UPI_ID),('fampay_status','on'),('paytm_status','on'),('manual_upi_status','on')]:
         cur.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
     db.commit()
 
@@ -349,6 +378,24 @@ def get_support_url():
 
 def get_contact_1(): return get_setting('contact_1', DEFAULT_CONTACT_1)
 def get_contact_2(): return get_setting('contact_2', DEFAULT_CONTACT_2)
+
+def get_active_upi_order(user_id, provider, amount, max_age=1800):
+    """Return an existing active order for this user/provider/amount.
+
+    This prevents double-clicks/retries from creating multiple live orders for
+    the same payment request. Only a recent pending order is reusable.
+    """
+    try:
+        cutoff = time.time() - float(max_age)
+        return cur.execute(
+            """SELECT * FROM upi_orders
+               WHERE user_id=? AND LOWER(COALESCE(provider,'fampay'))=LOWER(?)
+                 AND amount=? AND status IN ('pending','manual_pending') AND created_ts>=?
+               ORDER BY created_ts DESC LIMIT 1""",
+            (user_id, provider, amount, cutoff),
+        ).fetchone()
+    except Exception:
+        return None
 
 def is_utr_used_by_other_order(utr, cur_oid=None):
     """Return the previous order using this UTR/BANKTXNID.
