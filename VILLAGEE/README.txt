@@ -39,3 +39,12 @@ runner.py       per-bot app + multi-bot runner
 
 Note: cross-module imports sit at the BOTTOM of each file on purpose
 (circular references between handlers/views resolve safely that way).
+
+v28.5 — Mini App parity + Paytm fix
+-----------------------------------
+admin_text.py       FIX: SET PAYTM UPI / SET PAYTM MID now save (handler was missing)
+miniapp_bridge.py   NEW: runs bot logic for Mini App (Paytm/FamPay/Manual deposit,
+                    redeem, transfer, balance history, full admin API)
+miniapp/server.py   new endpoints + ban/maintenance gate + server on/off checks
+miniapp/static/*    Paytm Auto, Manual UTR submit, Redeem, Send Balance, Support,
+                    Balance History, WhatsApp card and complete Admin Panel

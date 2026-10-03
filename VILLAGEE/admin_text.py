@@ -319,10 +319,47 @@ async def handle_admin_text(update, context):
         upi = text.strip().replace(" ", "")
         if "@" not in upi:
             await msg.reply_text(f"{emo('❌')} Invalid UPI.", parse_mode="HTML"); return
-        set_setting('fampay_upi_id', upi); temp_data.pop(uid, None)
+        set_setting('fampay_upi_id', upi)
+        try: set_global_payment_setting('fampay_upi_id', upi)
+        except Exception as e: log.warning("global fampay upi save: %s", e)
+        temp_data.pop(uid, None)
         await msg.reply_text(f"{emo('✅')} {escape(upi)}", parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[ibtn("BACK","adm_gmail_menu",emoji="🔙",style="primary")]]))
         await log_admin_action(uid, "Auto UPI Set", upi); return
+    if act == 'paytm_set_upi':
+        upi = re.sub(r'\s+', '', text.strip())
+        if not re.fullmatch(r'[A-Za-z0-9._\-]{2,}@[A-Za-z0-9._\-]{2,}', upi):
+            await msg.reply_text(
+                f"{emo('❌')} Invalid UPI ID. Example: <code>name@paytm</code>\n"
+                f"Send again or /cancel.", parse_mode="HTML"); return
+        set_setting('paytm_upi_id', upi)
+        try: set_global_payment_setting('paytm_upi_id', upi)
+        except Exception as e: log.warning("global paytm upi save: %s", e)
+        temp_data.pop(uid, None)
+        await msg.reply_text(
+            f"{emo('✅')} Paytm UPI saved:\n<code>{escape(upi)}</code>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[ibtn("BACK","adm_gmail_menu",emoji="🔙",style="primary")]]))
+        try: await log_admin_action(uid, "Paytm UPI Set", upi)
+        except Exception: pass
+        return
+    if act == 'paytm_set_mid':
+        mid = re.sub(r'\s+', '', text.strip())
+        if not re.fullmatch(r'[A-Za-z0-9_\-]{6,40}', mid):
+            await msg.reply_text(
+                f"{emo('❌')} Invalid MID. Send the Paytm Merchant ID only "
+                f"(letters/digits, no spaces).\nSend again or /cancel.", parse_mode="HTML"); return
+        set_setting('paytm_mid', mid)
+        try: set_global_payment_setting('paytm_mid', mid)
+        except Exception as e: log.warning("global paytm mid save: %s", e)
+        temp_data.pop(uid, None)
+        await msg.reply_text(
+            f"{emo('✅')} Paytm MID saved:\n<code>{escape(mid)}</code>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[ibtn("BACK","adm_gmail_menu",emoji="🔙",style="primary")]]))
+        try: await log_admin_action(uid, "Paytm MID Set", mid)
+        except Exception: pass
+        return
     if act == 'gmail_set_pw':
         pw = text.strip().replace(" ", "")
         if len(pw) < 8:
@@ -758,7 +795,7 @@ from buttons import BTN_CANCEL, ibtn, main_reply_kb
 from config import API_HASH, API_ID, DAYBREAK_OPTIONS, log, now_ist
 from context import cur, current_ctx, db
 from countries import get_country_info
-from database import is_owner, set_setting, update_balance
+from database import is_owner, set_global_payment_setting, set_setting, update_balance
 from emojis import auto_premium, emo
 from force_join import _force_join_cache
 from history import record_balance_history
