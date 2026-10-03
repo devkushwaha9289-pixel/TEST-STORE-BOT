@@ -117,6 +117,28 @@ async def handle_admin_action(update, context):
         return
 
     # ---------- ADMIN SET MANUAL UPI ID ----------
+    if data == "adm_toggle_fampay":
+        ns = 'off' if get_setting('fampay_status', 'on') == 'on' else 'on'
+        set_setting('fampay_status', ns)
+        try: await q.answer(f"FamPay Automatic {ns.upper()}", show_alert=True)
+        except: pass
+        await log_admin_action(uid, "FamPay Automatic", ns.upper())
+        await view_admin_payment_methods(update); return
+    if data == "adm_toggle_paytm":
+        ns = 'off' if get_setting('paytm_status', 'on') == 'on' else 'on'
+        set_setting('paytm_status', ns)
+        try: await q.answer(f"Paytm Automatic {ns.upper()}", show_alert=True)
+        except: pass
+        await log_admin_action(uid, "Paytm Automatic", ns.upper())
+        await view_admin_payment_methods(update); return
+    if data == "adm_toggle_manual_upi":
+        ns = 'off' if get_setting('manual_upi_status', 'on') == 'on' else 'on'
+        set_setting('manual_upi_status', ns)
+        try: await q.answer(f"Manual UPI {ns.upper()}", show_alert=True)
+        except: pass
+        await log_admin_action(uid, "Manual UPI", ns.upper())
+        await view_admin_payment_methods(update); return
+
     if data == "adm_manual_upi_set":
         temp_data[uid] = {'admin_action': 'manual_upi_set'}
         await q.message.reply_text(
@@ -1168,6 +1190,7 @@ async def handle_admin_action(update, context):
 # modules resolve safely — every definition above already exists).
 # ============================================================
 from admin_panel import (
+    view_admin_payment_methods,
     view_admin_cat_server_select, view_admin_gmail_menu, view_admin_log_menu,
     view_admin_lzt_settings, view_admin_maintenance, view_admin_settings,
     view_admin_stock_all, view_admin_stock_menu, view_admin_tx_month, view_admin_tx_today,
