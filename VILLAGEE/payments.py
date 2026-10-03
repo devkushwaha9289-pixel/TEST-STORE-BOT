@@ -29,8 +29,11 @@ def keypad_kb(prefix="kp_"):
         [ibtn("CANCEL", "cancel", emoji="🚫", style="danger")]])
 
 async def complete_upi_order(oid, uid, amount, qr_msg_id=None, source="fampay_api", utr=None, txn=None):
+    # Paytm duplicate protection is based ONLY on BANKTXNID stored as UTR.
+    # TXNID is stored for reference but must never block a Paytm payment.
     if utr and is_utr_used_by_other_order(utr, oid): return False
-    if txn and is_txn_used_by_other_order(txn, oid): return False
+    if txn and not str(source).lower().startswith("paytm") and is_txn_used_by_other_order(txn, oid):
+        return False
     async with get_user_lock(uid):
         row = cur.execute("SELECT status FROM upi_orders WHERE order_id=?", (oid,)).fetchone()
         if not row or row["status"] != "pending": return False
