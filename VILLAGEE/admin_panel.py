@@ -6,6 +6,7 @@ Admin panel views: main panel, transactions, settings, users, gmail/log/stock me
 """
 
 from datetime import datetime, timedelta, timezone
+from html import escape
 from telegram import InlineKeyboardMarkup
 
 # ============================================================
@@ -110,11 +111,26 @@ async def _render_tx_page(update, uid, page, s, e, title, kind):
 # PAYMENT METHODS
 # ============================================================
 async def view_admin_payment_methods(update):
+    """Plain Telegram inline-only payment settings screen.
+
+    Deliberately avoids rich-message editing so callback buttons work on every
+    configured bot/client and on normal Telegram Bot API deployments.
+    """
     uid = update.effective_user.id
     if not is_admin(uid): return
     fs = get_setting('fampay_status', 'on') == 'on'
     ps = get_setting('paytm_status', 'on') == 'on'
     ms = get_setting('manual_upi_status', 'on') == 'on'
+    text = (
+        "<b>💳 PAYMENT METHODS</b>\n\n"
+        f"⚡ FamPay Automatic: <b>{'ON' if fs else 'OFF'}</b>\n"
+        f"💳 Paytm Automatic: <b>{'ON' if ps else 'OFF'}</b>\n"
+        f"📄 UPI Manual: <b>{'ON' if ms else 'OFF'}</b>\n\n"
+        f"🏦 FamPay UPI: <code>{escape((get_fampay_upi_id() or 'NOT SET')[:64])}</code>\n"
+        f"💳 Paytm UPI: <code>{escape((get_paytm_upi_id() or 'NOT SET')[:64])}</code>\n"
+        f"🆔 Paytm MID: <code>{escape((get_paytm_mid() or 'NOT SET')[:64])}</code>\n"
+        f"📄 Manual UPI: <code>{escape((get_manual_upi_id() or 'NOT SET')[:64])}</code>"
+    )
     rows = [
         [ibtn(f"FAMPAY AUTOMATIC: {'ON' if fs else 'OFF'}", "adm_toggle_fampay", emoji="⚡", style="success" if fs else "danger")],
         [ibtn(f"PAYTM AUTOMATIC: {'ON' if ps else 'OFF'}", "adm_toggle_paytm", emoji="💳", style="success" if ps else "danger")],
@@ -123,20 +139,21 @@ async def view_admin_payment_methods(update):
         [ibtn("SET PAYTM UPI", "adm_paytm_set_upi", emoji="💳", style="primary"),
          ibtn("SET PAYTM MID", "adm_paytm_set_mid", emoji="🆔", style="primary")],
         [ibtn("SET MANUAL UPI", "adm_manual_upi_set", emoji="📄", style="primary")],
-        [ibtn("FAMPAY SETTINGS", "adm_gmail_menu", emoji="⚙️", style="primary")],
+        [ibtn("FAMPAY DETAILS", "adm_gmail_menu", emoji="⚙️", style="primary")],
         [ibtn("BACK", "admin_panel", emoji="🔙", style="primary")],
     ]
-    blocks = [make_heading("💳 PAYMENT METHODS", 2),
-              make_table([["METHOD", "STATUS"],
-                          ["⚡ FamPay Automatic", "ON" if fs else "OFF"],
-                          ["💳 Paytm Automatic", "ON" if ps else "OFF"],
-                          ["📄 UPI Manual", "ON" if ms else "OFF"],
-                          ["🏦 FamPay UPI", (get_fampay_upi_id() or "NOT SET")[:32]],
-                          ["💳 Paytm UPI", (get_paytm_upi_id() or "NOT SET")[:32]],
-                          ["🆔 Paytm MID", (get_paytm_mid() or "NOT SET")[:32]],
-                          ["📄 Manual UPI", (get_manual_upi_id() or "NOT SET")[:32]]])]
-    await send_rich_async(uid, blocks, reply_markup=InlineKeyboardMarkup(rows).to_dict(),
-                          fallback_text="💳 PAYMENT METHODS", edit_query=_edit_query_of(update))
+    markup = InlineKeyboardMarkup(rows)
+    q = getattr(update, 'callback_query', None)
+    try:
+        if q and q.message:
+            await q.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+        else:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+    except Exception:
+        try:
+            await q.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+        except Exception as e:
+            log.error("payment methods render: %s", e)
 
 
 # ============================================================
@@ -198,7 +215,7 @@ async def view_admin_panel(update):
             [ibtn("📋 LOG TARGETS","adm_log_menu",emoji="📋",style="success"),
              ibtn("📢 USER LOGS","adm_userlog_menu",emoji="📢",style="primary")],
             [ibtn("💳 PAYMENT METHODS","admin_payment_methods",emoji="💳",style="success")],
-            [ibtn("📧 FAMPAY AUTO","adm_gmail_menu",emoji="📧",style="primary")],
+            [ibtn("📧 FAMPAY AUTO","admin_payment_methods",emoji="📧",style="primary")],
             [ibtn("🖥️ SERVER 1 (LZT)","adm_lzt_settings",emoji="🖥️",style="primary")],
             [ibtn("🔧 MAINTENANCE","adm_maintenance",emoji="🔧",style="danger"),
              ibtn("💾 BACKUP","adm_backup",emoji="💾",style="success")],
