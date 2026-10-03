@@ -90,6 +90,9 @@ async def on_callback(update, context):
     if data == "admin_panel":
         if is_admin(uid): await view_admin_panel(update)
         return
+    if data == "admin_payment_methods":
+        if is_admin(uid): await view_admin_payment_methods(update)
+        return
     if data.startswith("stock_pg|"): await view_all_stock(update, int(data.split("|")[1])); return
 
     if data == "osint_show_docs":
@@ -321,6 +324,10 @@ async def on_callback(update, context):
         await _render_lzt_country_page(update, uid, 1); return
 
     if data == "dep_upi":
+        if get_setting('fampay_status', 'on') != 'on':
+            try: await q.answer("FamPay Automatic is disabled.", show_alert=True)
+            except: pass
+            return
         if not is_upi_online():
             try: await q.answer("UPI disabled.", show_alert=True)
             except: pass
@@ -333,6 +340,10 @@ async def on_callback(update, context):
 
     # ⭐ PAYTM AUTOMATIC — START (keypad)
     if data == "dep_paytm":
+        if get_setting('paytm_status', 'on') != 'on':
+            try: await q.answer("Paytm Automatic is disabled.", show_alert=True)
+            except: pass
+            return
         if not is_upi_online():
             try: await q.answer("UPI disabled.", show_alert=True)
             except: pass
@@ -383,6 +394,10 @@ async def on_callback(update, context):
 
     # ⭐ MANUAL UPI — START (keypad)
     if data == "dep_manual_upi":
+        if get_setting('manual_upi_status', 'on') != 'on':
+            try: await q.answer("Manual UPI is disabled.", show_alert=True)
+            except: pass
+            return
         if not is_upi_online():
             try: await q.answer("UPI disabled.", show_alert=True)
             except: pass
@@ -507,13 +522,13 @@ async def on_callback(update, context):
 # modules resolve safely — every definition above already exists).
 # ============================================================
 from admin_actions import handle_admin_action
-from admin_panel import view_admin_panel
+from admin_panel import view_admin_panel, view_admin_payment_methods
 from buttons import ibtn, main_reply_kb, redeem_reply_kb
 from commands import view_all_stock
 from config import DAYBREAK_OPTIONS, OTP_REGEX, log
 from context import cur, db
 from database import (
-    ensure_user, get_min_deposit, get_rate, get_transfer_fee, get_user, is_admin, is_banned,
+    ensure_user, get_min_deposit, get_rate, get_transfer_fee, get_user, get_setting, is_admin, is_banned,
     is_bot_online, is_upi_online, safe_get, get_paytm_mid, get_paytm_upi_id
 )
 from devices import back_to_otp_view, handle_logout_device, send_otp_rich, show_manage_devices
