@@ -138,7 +138,7 @@ async def view_lzt_country(update, iso_code, page=1):
                     parse_mode="HTML", reply_markup=kb)
             except: pass
             return
-        matched = filter_lzt_eligible(filter_lzt_items(res.get('items', []), flt))
+        matched = filter_lzt_items(res.get('items', []), flt)
         if not matched:
             kb = InlineKeyboardMarkup([[ibtn("⚙️ Filters","lzt_toggle_filters",emoji="⚙️",style="primary")],
                                         [ibtn("🔄 Refresh", f"lzt_chk|{iso_code}|1", emoji="🔄", style="success")],
@@ -172,7 +172,7 @@ async def view_lzt_country(update, iso_code, page=1):
         if nav: buttons.append(nav)
         buttons.append([ibtn("Change","buy1",emoji="🔙",style="danger"),
                         ibtn("HOME","home",emoji="🏠",style="primary")])
-        fb = f"<b>{country} {flag}</b> — {ti} eligible | Page {page}/{tp} | From ₹{sp}"
+        fb = f"<b>{country} {flag}</b> — {ti} accounts | Page {page}/{tp} | From ₹{sp}"
         try:
             await update.callback_query.edit_message_text(fb, parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
@@ -203,8 +203,7 @@ async def view_lzt_product(update, item_id, country=None):
         eligible, age = lzt_item_is_eligible(item)
         iso = LZT_COUNTRY_CATALOG.get(country, ("US","🇺🇸","1"))[0]
         buttons = []
-        if not eligible: buttons.append([ibtn("❌ Not Eligible","noop",style="danger")])
-        elif pwd: buttons.append([ibtn("🔐 Password Account","noop",style="danger")])
+        if pwd: buttons.append([ibtn("🔐 Password Account","noop",style="danger")])
         elif diff > 0: buttons.append([ibtn("Recharge","recharge",emoji="💳",style="success")])
         else:
             buttons.append([ibtn("✅ Purchase", f"lzt_buy|{item_id}|{fp}|{country}", emoji="✅", style="success")])
@@ -213,7 +212,7 @@ async def view_lzt_product(update, item_id, country=None):
         buttons.append([ibtn("HOME","home",emoji="🏠",style="primary")])
         info_rows = [["ℹ️ INFO","📋 DETAIL"],["💰 Price", f"₹{fp}"],["💳 Balance", f"₹{bal}"],
                      ["🌎 Country", str(country)],["🆔 Item ID", str(item_id)],
-                     ["⏱️ Age", f"{int(age)}s" if age else "—"],["✅ Eligible", "YES" if eligible else "NO"],
+                     ["⏱️ Age", f"{int(age)}s" if age else "—"],
                      ["🚫 Spam", "YES" if hs else "NO"],["💎 Premium", "YES" if hp else "NO"],
                      ["📧 Mail", "YES" if hm else "NO"],["🌍 Geo", "YES" if hg else "NO"],
                      ["💬 Chats", str(chats)],["📣 Channels", str(channels)],["👥 Contacts", str(contacts)]]
@@ -256,11 +255,6 @@ async def process_lzt_buy(update, item_id, price_str, country):
         mp = lzt_market_price(li)
         if not li or mp is None:
             try: await q.answer("Unable to load price.", show_alert=True)
-            except: pass
-            return
-        eligible, _ = lzt_item_is_eligible(li)
-        if not eligible:
-            try: await q.answer("Not eligible.", show_alert=True)
             except: pass
             return
         if lzt_item_requires_password(li):
@@ -381,15 +375,12 @@ async def process_lzt_mass_buy(update, first_item_id, price_str, country):
                 if not cid or cid in seen: continue
                 seen.add(cid)
                 if lzt_final_inr_price(item, get_lzt_markup(country)) == target:
-                    ok, _ = lzt_item_is_eligible(item)
-                    if ok: cands.append(item)
+                    cands.append(item)
         for item in cands:
             cid = str(item.get('item_id') or item.get('id') or '')
             lr = await lzt_request('GET', f"/{cid}", params={"currency": LZT_PRICE_CURRENCY})
             li = lr.get('item') if isinstance(lr, dict) else item
             if not li or lzt_item_requires_password(li): skipped += 1; continue
-            ok, _ = lzt_item_is_eligible(li)
-            if not ok: skipped += 1; continue
             cp = lzt_final_inr_price(li, get_lzt_markup(country))
             if cp != target: skipped += 1; continue
             mp = lzt_market_price(li)
