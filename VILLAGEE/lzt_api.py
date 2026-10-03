@@ -44,6 +44,111 @@ LZT_COUNTRY_CATALOG = {
     "United States": ("US","🇺🇸","1"),"Uzbekistan": ("UZ","🇺🇿","998"),"Vietnam": ("VN","🇻🇳","84"),
 }
 
+# Extra Server 1 countries — kept in sync with tg sell.py.
+MORE_SERVER1_COUNTRIES = """
+Åland Islands|ALA|🇦🇽|358
+American Samoa|ASM|🇦🇸|1
+Andorra|AND|🇦🇩|376
+Anguilla|AIA|🇦🇮|1
+Antarctica|ATA|🇦🇶|672
+Antigua and Barbuda|ATG|🇦🇬|1
+Aruba|ABW|🇦🇼|297
+Bahamas|BHS|🇧🇸|1
+Barbados|BRB|🇧🇧|1
+Belarus|BLR|🇧🇾|375
+Benin|BEN|🇧🇯|229
+Bermuda|BMU|🇧🇲|1
+Bhutan|BTN|🇧🇹|975
+Bolivia|BOL|🇧🇴|591
+Bosnia and Herzegovina|BIH|🇧🇦|387
+Bouvet Island|BVT|🇧🇻|47
+British Indian Ocean Territory|IOT|🇮🇴|246
+British Virgin Islands|VGB|🇻🇬|1
+Brunei|BRN|🇧🇳|673
+Bulgaria|BGR|🇧🇬|359
+Burkina Faso|BFA|🇧🇫|226
+Burundi|BDI|🇧🇮|257
+Cambodia|KHM|🇰🇭|855
+Cameroon|CMR|🇨🇲|237
+Canary Islands|CNR|🇮🇨|34
+Caribbean Netherlands|BES|🇧🇶|599
+Cayman Islands|CYM|🇰🇾|1
+Congo (DRC)|COD|🇨🇩|243
+Cook Islands|COK|🇨🇰|682
+Côte d’Ivoire|CIV|🇨🇮|225
+Croatia|HRV|🇭🇷|385
+Curaçao|CUW|🇨🇼|599
+Cyprus|CYP|🇨🇾|357
+Czechia|CZE|🇨🇿|420
+Equatorial Guinea|GNQ|🇬🇶|240
+Eritrea|ERI|🇪🇷|291
+Eswatini|SWZ|🇸🇿|268
+Ethiopia|ETH|🇪🇹|251
+Falkland Islands|FLK|🇫🇰|500
+Faroe Islands|FRO|🇫🇴|298
+French Guiana|GUF|🇬🇫|594
+French Polynesia|PYF|🇵🇫|689
+French Southern Territories|ATF|🇹🇫|262
+Gambia|GMB|🇬🇲|220
+Gibraltar|GIB|🇬🇮|350
+Guernsey|GGY|🇬🇬|44
+Guinea|GIN|🇬🇳|224
+Guinea-Bissau|GNB|🇬🇼|245
+Heard Island and McDonald Islands|HMD|🇭🇲|672
+Isle of Man|IMN|🇮🇲|44
+Jersey|JEY|🇯🇪|44
+Kosovo|XKX|🇽🇰|383
+Liberia|LBR|🇱🇷|231
+Liechtenstein|LIE|🇱🇮|423
+Mali|MLI|🇲🇱|223
+Marshall Islands|MHL|🇲🇭|692
+Martinique|MTQ|🇲🇶|596
+Mayotte|MYT|🇾🇹|262
+Micronesia|FSM|🇫🇲|691
+Monaco|MCO|🇲🇨|377
+Mongolia|MNG|🇲🇳|976
+Montenegro|MNE|🇲🇪|382
+Montserrat|MSR|🇲🇸|1
+Namibia|NAM|🇳🇦|264
+Nauru|NRU|🇳🇷|674
+New Caledonia|NCL|🇳🇨|687
+Niue|NIU|🇳🇺|683
+Norfolk Island|NFK|🇳🇫|672
+North Korea|PRK|🇰🇵|850
+North Macedonia|MKD|🇲🇰|389
+Northern Mariana Islands|MNP|🇲🇵|1
+Pitcairn Islands|PCN|🇵🇳|64
+Réunion|REU|🇷🇪|262
+Rwanda|RWA|🇷🇼|250
+Saint Barthélemy|BLM|🇧🇱|590
+Saint Helena|SHN|🇸🇭|290
+Saint Kitts and Nevis|KNA|🇰🇳|1
+Saint Lucia|LCA|🇱🇨|1
+Saint Martin|MAF|🇲🇫|590
+Saint Pierre and Miquelon|SPM|🇵🇲|508
+Saint Vincent and the Grenadines|VCT|🇻🇨|1
+San Marino|SMR|🇸🇲|378
+São Tomé and Príncipe|STP|🇸🇹|239
+Sint Maarten|SXM|🇸🇽|1
+Slovakia|SVK|🇸🇰|421
+South Georgia and South Sandwich Islands|SGS|🇬🇸|500
+Svalbard and Jan Mayen|SJM|🇸🇯|47
+Tanzania|TZA|🇹🇿|255
+Tokelau|TKL|🇹🇰|690
+Turks and Caicos Islands|TCA|🇹🇨|1
+Tuvalu|TUV|🇹🇻|688
+Vatican City|VAT|🇻🇦|379
+Venezuela|VEN|🇻🇪|58
+U.S. Virgin Islands|VIR|🇻🇮|1
+Wallis and Futuna|WLF|🇼🇫|681
+Western Sahara|ESH|🇪🇭|212
+Zimbabwe|ZWE|🇿🇼|263
+"""
+for _line in MORE_SERVER1_COUNTRIES.strip().splitlines():
+    _name, _code, _flag, _calling = _line.split("|")
+    LZT_COUNTRY_CATALOG.setdefault(_name, (_code, _flag, _calling))
+    
+
 def resolve_lzt_token():
     e = (LZT_TOKEN or "").strip()
     if e: return e
@@ -190,7 +295,7 @@ def get_lzt_markup(country_name):
     cs = [country_name]
     if country_name in LZT_COUNTRY_CATALOG:
         iso = LZT_COUNTRY_CATALOG[country_name][0]
-        cs.extend([iso, iso.upper()])
+        cs.extend([iso, iso.upper(), get_country_button_code(country_name)])
     row = None
     for c in dict.fromkeys(cs):
         row = cur.execute("SELECT markup_percent FROM lzt_settings WHERE LOWER(country)=LOWER(?)", (c,)).fetchone()
