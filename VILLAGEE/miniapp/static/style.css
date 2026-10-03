@@ -10,3 +10,10 @@
 @media (min-width:600px){#main{padding-left:22px;padding-right:22px}.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.card.big{grid-column:span 2}.stats{grid-template-columns:repeat(4,1fr)}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 .policy-page{padding:18px}.policy-section{padding:0 0 17px;margin-bottom:17px;border-bottom:1px solid #ededf1}.policy-section:last-child{padding-bottom:0;margin-bottom:0;border-bottom:0}.policy-section .detail-title{font-size:15px;margin-bottom:7px}.policy-text{font-size:12px;line-height:1.65;color:#767983;white-space:pre-wrap}
+
+.mini-btn{padding:8px 11px;border-radius:12px;font-size:10px;font-weight:900;border:1px solid #e1e1e8;white-space:nowrap}.mini-btn.on{background:linear-gradient(110deg,#e0fff2,#e9e1ff)}.mini-btn.off{background:#fff0f0;color:#a14a4a;border-color:#f1d4d4}
+.admin-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.deposit-box textarea{width:100%;padding:12px 13px;border-radius:15px;border:1px solid #dedfe5;background:#fafafd;outline:0;font:inherit;font-size:14px;font-weight:650;resize:vertical}
+.deposit-box textarea:focus{border-color:#b6aaff;box-shadow:0 0 0 4px rgba(143,126,255,.09)}
+.verify-label{display:block;margin:8px 0 6px;color:#888b95;font-size:11px;font-weight:800}
+a.btn{text-decoration:none}
