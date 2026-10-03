@@ -25,7 +25,16 @@ function loading(v){document.getElementById('loader').classList.toggle('hidden',
 function crumbs(parts){const e=document.getElementById('crumbs');if(!parts){e.classList.add('hidden');return;}e.innerHTML=parts.map((p,i)=>`<span${i===parts.length-1?' class="last"':''}>${esc(p)}</span>`).join('<b>›</b>');e.classList.remove('hidden');}
 function setBalance(){document.getElementById('balance').textContent=fmt(STATE.user?.balance);}
 async function loadMe(){STATE.user=await api('/api/me');setBalance();}
-async function loadConfig(){STATE.config=await api('/api/config');}
+function applyBrand(){
+  const c=STATE.config||{};
+  const name=(c.store_name||BOT_USERNAME||'Store').trim();
+  const n=document.getElementById('brandName'); if(n) n.textContent=name;
+  const m=document.getElementById('brandMini'); if(m) m.textContent=BOT_USERNAME?('@'+BOT_USERNAME):'';
+  const l=document.getElementById('brandLogo');
+  if(l&&c.store_logo&&l.getAttribute('src')!==c.store_logo){l.onerror=()=>{l.onerror=null;l.removeAttribute('src');l.style.visibility='hidden';};l.style.visibility='visible';l.src=c.store_logo;}
+  document.title=name;
+}
+async function loadConfig(){STATE.config=await api('/api/config');applyBrand();}
 function go(tab){switchTab(tab);}
 function navButtons(){document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===STATE.tab));}
 function openBotServer1(){
@@ -292,7 +301,7 @@ async function makeDeposit(method,amount){
   loading(true);
   try{
     const r=await api(`/api/deposit/${method}`,{method:'POST',body:JSON.stringify({amount:Math.floor(amount)})});
-    const qr=`https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=8&data=${encodeURIComponent(r.upi_url)}`;
+    const qrExt=`https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=8&data=${encodeURIComponent(r.upi_url)}`;const qr=r.qr||qrExt;
     const isPaytm=r.provider==='paytm', isManual=r.provider==='manual';
     const badge=isPaytm?'PAYTM AUTOMATIC':isManual?'MANUAL UPI PAYMENT':'FAMPAY AUTOMATIC';
     const sub=isPaytm?'Scan QR • Pay exact amount • Auto credit':isManual?'Scan QR • Pay exact amount • Submit UTR':'Scan QR • Pay exact amount • Submit UTR/TXN';
@@ -304,7 +313,7 @@ async function makeDeposit(method,amount){
     }else{
       verify=`<div class="verify-box"><div class="verify-title">Payment Verification</div><div class="verify-hint">Enter 12-digit numeric UTR, or Transaction ID (TXN). Amount is taken from this order automatically. Payments are also auto-detected.</div><label class="verify-label" for="paymentReference">UTR / Transaction ID (TXN)</label><input id="paymentReference" class="verify-input" type="text" autocomplete="off" spellcheck="false" placeholder="12-digit UTR or FMPIB..."><button class="btn btn-success" id="verifyPayment" type="button">Submit & Verify</button><div id="paymentStatus"></div></div>`;
     }
-    document.getElementById('depResult').innerHTML=`<div class="rainbow-pay-card"><div class="pay-badge">${badge}</div><div class="pay-title">Pay ${fmt(r.amount)}</div><div class="pay-subtitle">${sub}</div><div class="qr-frame"><div class="qr-frame-inner"><img class="qr" src="${qr}" alt="UPI payment QR"></div></div><div class="upi-id">UPI ID: <b>${esc(r.upi_id)}</b></div><div class="payment-meta"><div><span>Amount</span><b>${fmt(r.amount)}</b></div><div><span>Order</span><code>${esc(r.order_id)}</code></div></div><a class="btn btn-primary" href="${esc(r.upi_url)}">Open UPI app</a><button class="btn btn-success" id="copyUpi" type="button">Copy UPI ID</button><button class="btn btn-success" id="downloadQr" type="button">Download QR</button>${verify}</div>`;
+    document.getElementById('depResult').innerHTML=`<div class="rainbow-pay-card"><div class="pay-badge">${badge}</div><div class="pay-title">Pay ${fmt(r.amount)}</div><div class="pay-subtitle">${sub}</div><div class="qr-frame"><div class="qr-frame-inner"><img class="qr" src="${qr}" alt="UPI payment QR" onerror="if(this.dataset.f!=='1'){this.dataset.f='1';this.src='${qrExt}';}"></div></div><div class="upi-id">UPI ID: <b>${esc(r.upi_id)}</b></div><div class="payment-meta"><div><span>Amount</span><b>${fmt(r.amount)}</b></div><div><span>Order</span><code>${esc(r.order_id)}</code></div></div><a class="btn btn-primary" href="${esc(r.upi_url)}">Open UPI app</a><button class="btn btn-success" id="copyUpi" type="button">Copy UPI ID</button><button class="btn btn-success" id="downloadQr" type="button">Download QR</button>${verify}</div>`;
     document.getElementById('downloadQr').onclick=()=>downloadQR(qr,r.order_id);
     document.getElementById('copyUpi').onclick=async()=>{try{await navigator.clipboard.writeText(r.upi_id);toast('✅ UPI ID copied');}catch(e){toast(r.upi_id);}};
     if(isPaytm){document.getElementById('paytmCheck').onclick=()=>checkPaytm(r.order_id);}
@@ -315,7 +324,7 @@ async function makeDeposit(method,amount){
     document.getElementById('depResult').scrollIntoView({behavior:'smooth',block:'start'});
   }catch(e){toast('❌ '+e.message);}finally{loading(false);}
 }
-async function downloadQR(url,oid){try{const r=await fetch(url);if(!r.ok)throw 0;const blob=await r.blob();const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=`VILLAGEE_QR_${oid}.png`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){window.open(url,'_blank','noopener');}}
+async function downloadQR(url,oid){try{const r=await fetch(url);if(!r.ok)throw 0;const blob=await r.blob();const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=`QR_${oid}.png`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){window.open(url,'_blank','noopener');}}
 async function checkPaytm(oid){
   const btn=document.getElementById('paytmCheck'); if(btn){btn.disabled=true;btn.textContent='Checking…';}
   try{
@@ -385,7 +394,7 @@ async function renderRefer(){
         <div class="refer-head">Share your link — earn for every referral</div>
         <div class="refer-link">${esc(r.link)}</div>
         <button class="btn btn-primary" id="copyReferral" type="button">Copy Link</button>
-        <a class="btn btn-success" href="https://t.me/share/url?url=${encodeURIComponent(r.link)}&text=${encodeURIComponent('Join VILLAGEE SMS SHOP')}" target="_blank" rel="noopener">Share on Telegram</a>
+        <a class="btn btn-success" href="https://t.me/share/url?url=${encodeURIComponent(r.link)}&text=${encodeURIComponent('Join '+(STATE.config?.store_name||'our store'))}" target="_blank" rel="noopener">Share on Telegram</a>
       </div>
       <div class="section-title">Referral Summary</div>
       <div class="stats">
@@ -433,7 +442,7 @@ async function renderProfile(){
     </div>
     <div class="section-title">Terms & Policies</div>
     <div class="list">
-      <button class="row" data-profile-page="terms" type="button"><div class="row-icon">📄</div><div class="row-main"><div class="row-title">Terms & Conditions</div><div class="row-sub">Rules for using VILLAGEE SMS SHOP</div></div><div class="row-arrow">›</div></button>
+      <button class="row" data-profile-page="terms" type="button"><div class="row-icon">📄</div><div class="row-main"><div class="row-title">Terms & Conditions</div><div class="row-sub">Rules for using ${esc(STATE.config?.store_name||'this store')}</div></div><div class="row-arrow">›</div></button>
       <button class="row" data-profile-page="refund" type="button"><div class="row-icon">🚫</div><div class="row-main"><div class="row-title">Refund Policy</div><div class="row-sub">All purchases are final — no refund</div></div><div class="row-arrow">›</div></button>
       <button class="row" data-profile-page="privacy" type="button"><div class="row-icon">🛡️</div><div class="row-main"><div class="row-title">Privacy Policy</div><div class="row-sub">How account and order information is used</div></div><div class="row-arrow">›</div></button>
     </div>
@@ -467,7 +476,7 @@ async function openProfilePage(page){
   try{
     if(page==='terms'){
       policyPage('Terms & Conditions','📄',[
-        ['1. Acceptance','By using VILLAGEE SMS SHOP, you agree to these Terms & Conditions. If you do not agree, do not use the marketplace.'],
+        ['1. Acceptance',`By using ${STATE.config?.store_name||'this store'}, you agree to these Terms & Conditions. If you do not agree, do not use the marketplace.`],
         ['2. Account','You must provide accurate Telegram account information and keep your account secure. You are responsible for activity performed through your account.'],
         ['3. Purchases','Orders are processed using the wallet balance shown in the Mini App. Product details, availability and delivery can vary by server.'],
         ['4. Account Products','Only use products/accounts in accordance with applicable laws and the product instructions. Do not submit or use accounts that you do not own or have permission to use.'],
