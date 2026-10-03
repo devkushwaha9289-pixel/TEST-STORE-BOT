@@ -88,10 +88,22 @@ async def on_callback(update, context):
     if data == "buy3": await view_buy3(update); return
     if data == "buywa": await view_buywa(update); return
     if data == "admin_panel":
-        if is_admin(uid): await view_admin_panel(update)
+        if is_admin(uid):
+            try:
+                await view_admin_panel(update)
+            except Exception as e:
+                log.exception("admin panel callback failed", exc_info=e)
+                try: await q.answer("Admin panel error. Check bot logs.", show_alert=True)
+                except: pass
         return
     if data == "admin_payment_methods":
-        if is_admin(uid): await view_admin_payment_methods(update)
+        if is_admin(uid):
+            try:
+                await view_admin_payment_methods(update)
+            except Exception as e:
+                log.exception("payment methods callback failed", exc_info=e)
+                try: await q.answer("Payment Methods error. Check bot logs.", show_alert=True)
+                except: pass
         return
     if data.startswith("stock_pg|"): await view_all_stock(update, int(data.split("|")[1])); return
 
