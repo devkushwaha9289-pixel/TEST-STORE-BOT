@@ -85,28 +85,36 @@ async def _try_paytm_order(order_id: str, notify_uid: bool = False) -> bool:
             pass
         return False
 
+    # IMPORTANT: For Paytm, BANKTXNID is the UTR/reference used for
+    # duplicate-payment detection. TXNID is only stored as Paytm's
+    # transaction reference and is NOT used to decide duplicates.
+    bank_txn_id = str(data.get("BANKTXNID") or "").strip().upper() or None
     txn = str(data.get("TXNID") or "").strip().upper() or None
-    if txn:
-        existing = is_txn_used_by_other_order(txn, order_id)
-        if existing:
-            cur.execute(
-                """UPDATE upi_orders
-                   SET status='duplicate', txn_id=?, verified_via='paytm_api'
-                   WHERE order_id=? AND status='pending'""",
-                (txn, order_id),
+
+    if not bank_txn_id:
+        log.warning("Paytm TXN_SUCCESS without BANKTXNID for %s: %s", order_id, data)
+        return False
+
+    existing = is_utr_used_by_other_order(bank_txn_id, order_id)
+    if existing:
+        cur.execute(
+            """UPDATE upi_orders
+               SET status='duplicate', utr=?, txn_id=?, paid_amount=?, verified_via='paytm_api'
+               WHERE order_id=? AND status='pending'""",
+            (bank_txn_id, txn, paid, order_id),
+        )
+        db.commit()
+        try:
+            await _send_double_payment_alert(
+                row["user_id"], order_id, bank_txn_id, txn, existing
             )
-            db.commit()
-            try:
-                await _send_double_payment_alert(
-                    row["user_id"], order_id, None, txn, existing
-                )
-            except Exception:
-                pass
-            return False
+        except Exception:
+            pass
+        return False
 
     ok = await complete_upi_order(
         order_id, row["user_id"], int(row["amount"]),
-        row["qr_msg_id"], "paytm_api", txn=txn
+        row["qr_msg_id"], "paytm_api", utr=bank_txn_id, txn=txn
     )
     return bool(ok)
 
