@@ -115,7 +115,8 @@ async def view_lzt_country(update, iso_code, page=1):
         dbv = _safe_daybreak(flt.get("offline", DEFAULT_DAYBREAK))
         params = {"country[]":iso_code,"spam":flt["spam"] if flt["spam"] != "any" else None,
                   "nsb":1,"pmin":0.01,"pmax":1000,"page":page,"per_page":40,
-                  "password":"no","currency":LZT_PRICE_CURRENCY,"daybreak":dbv}
+                  "password":"no","currency":LZT_PRICE_CURRENCY}
+        if dbv != "any": params["daybreak"] = dbv
         if flt["premium"] != "any": params["premium"] = flt["premium"]
         res = await fetch_lzt_stock_response(params, timeout_total=LZT_STOCK_TIMEOUT, max_retries=LZT_STOCK_RETRIES)
         if lzt_is_rate_limited_response(res):
@@ -286,9 +287,19 @@ async def process_lzt_buy(update, item_id, price_str, country):
                 old = r2["balance"] if r2 else 0
                 cur.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (fp, uid)); db.commit()
                 record_balance_history(uid, fp, "refund", "server1", "Failed refund", old, old + fp)
-            kb = InlineKeyboardMarkup([[ibtn("Back", f"lzt_chk|{iso}|1", emoji="🔙", style="primary")]])
-            await _show_status_rich(uid, f"{emo('❌')} Failed! Refunded ₹{fp}.", edit_query=q,
-                                     reply_markup=kb.to_dict())
+            err_text = lzt_error_text(br) or "Purchase failed."
+            kb = InlineKeyboardMarkup([[ibtn("Back", f"lzt_chk|{iso}|1", emoji="🔙", style="primary")],
+                                       [ibtn("HOME","home",emoji="🏠",style="primary")]])
+            low = str(err_text).lower()
+            if "password" in low:
+                msg = f"{emo('⚠️')} <b>Purchase skipped and refunded.</b>\\nThis Server 1 listing requires a seller login password."
+            elif "balance" in low or "средств" in low or "not enough" in low:
+                msg = f"{emo('⚠️')} <b>Server 1 Maintenance.</b>\\nServer 1 reported insufficient API balance. Your ₹{fp} was refunded."
+            elif "timeout" in low:
+                msg = f"{emo('⚠️')} <b>Server 1 is slow right now.</b>\\nYour ₹{fp} was refunded. Please retry shortly."
+            else:
+                msg = f"{emo('❌')} <b>Purchase Failed.</b>\\nYour ₹{fp} was refunded."
+            await _show_status_rich(uid, msg, edit_query=q, reply_markup=kb.to_dict())
             return
         pid = lzt_purchase_item_id(br, item_id)
 
@@ -362,7 +373,7 @@ async def process_lzt_mass_buy(update, first_item_id, price_str, country):
         pb = {"country[]":iso,"nsb":1,"pmin":0.01,"pmax":1000,"per_page":40,
               "password":"no","currency":LZT_PRICE_CURRENCY}
         cands = []; seen = set()
-        for p in range(1, 3):
+        for p in range(1, 4):
             res = await fetch_lzt_stock_response(dict(pb, page=p),
                                                   timeout_total=LZT_STOCK_TIMEOUT, max_retries=LZT_STOCK_RETRIES)
             for item in (res or {}).get('items', [])[:40]:
