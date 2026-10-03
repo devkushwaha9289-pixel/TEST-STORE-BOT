@@ -8,3 +8,9 @@ UPDATE — fixes (Hinglish)
    Daily 7:00 PM IST: har bot ka total selling + total deposit statement owner + master owner ko.
 5. Broadcast: image/video + message dono jaate hain (long text / rich button me media pehle, message baad me). ADD FILE se document bhi.
    "LZT" naam visible text se hata diya, sab jagah SERVER 1.
+
+UPDATE 2 — QR after "Done" (FamPay / Paytm / Manual)
+- Naya qr_pure.py: bina `qrcode` library ke bhi QR banta hai (pure Python). Order: qrcode lib -> qr_pure -> online QR service.
+- Keypad me amount ke baad ✅ dabate hi QR photo jaati hai; Telegram reject kare to bina premium emoji/style ke dobara try, phir UPI link message.
+- Mini app QR (Paytm/FamPay/Manual) server se data-URI me aata hai.
+- Caption ko raw HTML me kaatne ka bug hataya.

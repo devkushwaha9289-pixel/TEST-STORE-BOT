@@ -223,7 +223,6 @@ async def mini_deposit_fampay(uid, amount):
         "amount": amount, "poll": True,
         "upi_url": create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME),
         "qr": _qr_for(create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME)),
-        "qr": _qr_for(create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME)),
         "message": "Pay exact amount, then submit UTR/TXN (or wait for auto-detect).",
     }
 
@@ -278,6 +277,7 @@ async def mini_deposit_manual(uid, amount):
         "ok": True, "provider": "manual", "order_id": oid, "upi_id": upi,
         "amount": amount, "poll": False,
         "upi_url": create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME),
+        "qr": _qr_for(create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME)),
         "message": "Pay the exact amount, then submit your UTR for admin approval.",
     }
 

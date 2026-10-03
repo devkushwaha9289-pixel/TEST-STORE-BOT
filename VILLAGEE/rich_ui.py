@@ -119,7 +119,7 @@ async def send_qr_photo(chat_id, png_bytes, caption, reply_markup=None):
     ]
     for cap, kb in attempts:
         try:
-            r = await _tg_send_photo_buffer(chat_id, png_bytes, cap[:1024], reply_markup=kb)
+            r = await _tg_send_photo_buffer(chat_id, png_bytes, cap, reply_markup=kb)
             d = r.json()
             if d.get("ok"):
                 return d.get("result", {}).get("message_id")

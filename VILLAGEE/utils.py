@@ -121,21 +121,43 @@ def create_upi_url(upi, amount, order_id, name):
             f"&tn={quote(f'Payment for ORDER{order_id}', safe='')}"f"&cu=INR")
 
 def make_qr_png_bytes(data):
-    """Render ANY text (UPI link) as a PNG QR. Works with Pillow or pure-PyPNG backend."""
-    if not QR_AVAILABLE:
-        raise RuntimeError("qrcode not installed (pip install qrcode[pil])")
-    qr = qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_M, box_size=10, border=4)
-    qr.add_data(data); qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = BytesIO()
+    """Render ANY text (UPI link) as a PNG QR. Never depends on one library:
+    1) `qrcode` package  2) built-in pure-Python encoder (qr_pure.py)  3) online QR service."""
+    data = str(data)
+    errors = []
+    if QR_AVAILABLE:
+        try:
+            qr = qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_M, box_size=10, border=4)
+            qr.add_data(data); qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            buf = BytesIO()
+            try:
+                img.save(buf, format="PNG")
+            except TypeError:
+                buf = BytesIO(); img.save(buf)
+            out = buf.getvalue()
+            if out[:8] == b"\x89PNG\r\n\x1a\n":
+                return out
+            errors.append("qrcode: not a PNG")
+        except Exception as e:
+            errors.append(f"qrcode: {e}")
     try:
-        img.save(buf, format="PNG")
-    except TypeError:
-        buf = BytesIO(); img.save(buf)
-    out = buf.getvalue()
-    if not out:
-        raise RuntimeError("QR render produced empty image")
-    return out
+        from qr_pure import qr_png_bytes
+        out = qr_png_bytes(data)
+        if out[:8] == b"\x89PNG\r\n\x1a\n":
+            return out
+    except Exception as e:
+        errors.append(f"pure: {e}")
+    try:
+        import requests as _rq
+        r = _rq.get("https://api.qrserver.com/v1/create-qr-code/",
+                    params={"size": "500x500", "margin": "10", "data": data}, timeout=10)
+        if r.ok and r.content[:4] == b"\x89PNG":
+            return r.content
+        errors.append(f"online: HTTP {r.status_code}")
+    except Exception as e:
+        errors.append(f"online: {e}")
+    raise RuntimeError("QR generation failed: " + " | ".join(errors))
 
 def generate_qr_png_bytes(upi, amount, order_id, name):
     return make_qr_png_bytes(create_upi_url(upi, amount, order_id, name))
