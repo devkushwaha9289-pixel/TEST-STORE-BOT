@@ -351,15 +351,31 @@ def get_contact_1(): return get_setting('contact_1', DEFAULT_CONTACT_1)
 def get_contact_2(): return get_setting('contact_2', DEFAULT_CONTACT_2)
 
 def is_utr_used_by_other_order(utr, cur_oid=None):
+    """Return the previous order using this UTR/BANKTXNID.
+
+    For Paytm, BANKTXNID is the UTR and is the authoritative duplicate
+    key. Keep previously accepted/rejected payment records so the same
+    bank reference cannot later be credited on another order.
+    """
     if not utr: return None
     c = str(utr).strip()
     if not c: return None
+    blocked = ("success", "duplicate", "mismatch")
+    marks = ",".join("?" for _ in blocked)
     if cur_oid:
-        r = cur.execute("""SELECT order_id FROM upi_orders WHERE UPPER(utr)=UPPER(?)
-            AND status='success' AND order_id != ?""", (c, cur_oid)).fetchone()
+        r = cur.execute(
+            f"""SELECT order_id FROM upi_orders
+                WHERE UPPER(utr)=UPPER(?) AND status IN ({marks}) AND order_id != ?
+                ORDER BY created_ts ASC LIMIT 1""",
+            (c, *blocked, cur_oid),
+        ).fetchone()
     else:
-        r = cur.execute("SELECT order_id FROM upi_orders WHERE UPPER(utr)=UPPER(?) AND status='success'",
-                        (c,)).fetchone()
+        r = cur.execute(
+            f"""SELECT order_id FROM upi_orders
+                WHERE UPPER(utr)=UPPER(?) AND status IN ({marks})
+                ORDER BY created_ts ASC LIMIT 1""",
+            (c, *blocked),
+        ).fetchone()
     return r["order_id"] if r else None
 
 def is_txn_used_by_other_order(txn, cur_oid=None):
