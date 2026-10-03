@@ -590,9 +590,12 @@ async def cache_lzt_stock_loop():
                                                        max_retries=LZT_STOCK_RETRIES)
                 if fkey not in cached_lzt_stock: cached_lzt_stock[fkey] = {}
                 if res and 'items' in res:
-                    flt = {"spam":sp,"geoblock":gb,"offline":str(dbv),
+                    flt = {"spam":sp,"geoblock":gb,"offline":off,
                            "login_mail":lm,"premium":pr}
-                    filtered = filter_lzt_eligible(filter_lzt_items(res.get('items',[]), flt))
+                    # Match tg sell.py: stock counts come from the /telegram items
+                    # after the configured listing filters. Do not require edit_date
+                    # to be present/older than 24h just to show stock.
+                    filtered = filter_lzt_items(res.get('items',[]), flt)
                     if not filtered: cached_lzt_stock[fkey][cn] = (0, 0.0)
                     else:
                         cheapest = min(filtered, key=lambda x: float(x.get('price') or 99999))
