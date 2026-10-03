@@ -506,6 +506,12 @@ async def handle_admin_action(update, context):
         temp_data[uid] = {'admin_action': 'gmail_set_upi'}
         await q.message.reply_text(f"{emo('🏦')} Send AUTO UPI ID:", parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[ibtn("CANCEL","cancel",emoji="🚫",style="danger")]])); return
+    if data == "adm_paytm_set_upi":
+        temp_data[uid] = {'admin_action': 'paytm_set_upi'}
+        await q.message.reply_text(f"{emo('💳')} Send GLOBAL PAYTM UPI ID:\n\nCurrent: <code>{escape(get_paytm_upi_id() or 'NOT SET')}</code>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[ibtn("CANCEL","cancel",emoji="🚫",style="danger")]])); return
+    if data == "adm_paytm_set_mid":
+        temp_data[uid] = {'admin_action': 'paytm_set_mid'}
+        await q.message.reply_text(f"{emo('🆔')} Send GLOBAL PAYTM MID:\n\nCurrent: <code>{escape(get_paytm_mid() or 'NOT SET')}</code>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[ibtn("CANCEL","cancel",emoji="🚫",style="danger")]])); return
     if data == "adm_gmail_set_pw":
         temp_data[uid] = {'admin_action': 'gmail_set_pw'}
         await q.message.reply_text(f"{emo('🔑')} Send App Password:", parse_mode="HTML",
@@ -1181,7 +1187,8 @@ from commands import test_rich_message
 from config import DAYBREAK_OPTIONS, FAMPAY_SENDER, IMAP_PORT, IMAP_SERVER, log
 from context import BOT_CONTEXTS, cur, current_bot_username, db
 from database import (
-    get_admins, get_manual_upi_id, get_setting, is_admin, is_bot_online, is_buy1_online,
+    get_admins, get_manual_upi_id, get_setting, is_admin,
+    get_fampay_upi_id, get_paytm_upi_id, get_paytm_mid, set_global_payment_setting, is_bot_online, is_buy1_online,
     is_buy2_online, is_buy3_online, is_gmail_verify_enabled, is_master_owner, is_owner,
     is_upi_online, set_setting, update_balance
 )
