@@ -331,6 +331,56 @@ async def on_callback(update, context):
             f"{emo('📉')} Min ₹{min_d}", parse_mode="HTML", reply_markup=keypad_kb("kp_"))
         return
 
+    # ⭐ PAYTM AUTOMATIC — START (keypad)
+    if data == "dep_paytm":
+        if not is_upi_online():
+            try: await q.answer("UPI disabled.", show_alert=True)
+            except: pass
+            return
+        if not get_paytm_mid() or not get_paytm_upi_id():
+            try: await q.answer("Paytm is not configured.", show_alert=True)
+            except: pass
+            return
+        min_d = get_min_deposit()
+        deposit_input[uid] = {'step': 'paytm_keypad', 'val': '0'}
+        await q.message.reply_text(
+            f"<b>{emo('💳')} PAYTM AUTOMATIC — AMOUNT</b>\\n\\n"
+            f"{emo('💰')} <code>₹0</code>\\n\\n"
+            f"{emo('📉')} Min ₹{min_d}\\n\\n"
+            "Payment will be checked automatically.",
+            parse_mode="HTML", reply_markup=keypad_kb("pkp_"))
+        return
+
+    if data.startswith("pkp_"):
+        st = deposit_input.get(uid)
+        if not st or st.get('step') != 'paytm_keypad':
+            return
+        a = data.replace("pkp_", "")
+        cv = st.get('val', "0")
+        if a.isdigit():
+            cv = a if cv == "0" else cv + a
+            if len(cv) > 7: cv = cv[:7]
+        elif a == "del":
+            cv = cv[:-1] or "0"
+        elif a == "done":
+            amt = int(cv); min_d = get_min_deposit()
+            if amt < min_d:
+                try: await q.answer(f"Min ₹{min_d}", show_alert=True)
+                except: pass
+                return
+            deposit_input.pop(uid, None)
+            await show_paytm_qr(q.message.chat_id, uid, amt)
+            return
+        st['val'] = cv
+        try:
+            await q.edit_message_text(
+                f"<b>{emo('💳')} PAYTM AUTOMATIC — AMOUNT</b>\\n\\n"
+                f"{emo('💰')} <code>₹{cv}</code>\\n\\n"
+                f"{emo('👉')} Tap ✅ to continue.",
+                parse_mode="HTML", reply_markup=keypad_kb("pkp_"))
+        except: pass
+        return
+
     # ⭐ MANUAL UPI — START (keypad)
     if data == "dep_manual_upi":
         if not is_upi_online():
@@ -400,6 +450,7 @@ async def on_callback(update, context):
         except: pass
         return
     if data.startswith("check_upi_"): await handle_upi_check(update, context); return
+    if data.startswith("check_paytm_"): await handle_paytm_check(update, context); return
     if data.startswith("utr_enter|"): await handle_utr_enter(update, context); return
     if data.startswith("depm_"):
         m = data.replace("depm_", "")
@@ -463,7 +514,7 @@ from config import DAYBREAK_OPTIONS, OTP_REGEX, log
 from context import cur, db
 from database import (
     ensure_user, get_min_deposit, get_rate, get_transfer_fee, get_user, is_admin, is_banned,
-    is_bot_online, is_upi_online, safe_get
+    is_bot_online, is_upi_online, safe_get, get_paytm_mid, get_paytm_upi_id
 )
 from devices import back_to_otp_view, handle_logout_device, send_otp_rich, show_manage_devices
 from emojis import auto_premium, emo
@@ -478,6 +529,7 @@ from lzt_api import (
 from manual_upi import show_manual_upi_qr
 from osint import get_osint_docs_file_id
 from payments import handle_upi_check, handle_utr_enter, keypad_kb, show_upi_qr
+from paytm import handle_paytm_check, show_paytm_qr
 from rich_ui import _tg_post
 from server1 import (
     _render_lzt_country_page, handle_lzt_get_otp, process_lzt_buy, process_lzt_mass_buy,
