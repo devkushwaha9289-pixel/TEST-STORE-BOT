@@ -375,6 +375,74 @@ async def _process_osint_api_purchase(update, p):
     except: pass
 
 
+async def process_osint_purchase_from_miniapp(uid, prod_id):
+    """OSINT API purchase worker for the Mini App (returns a dict, raises RuntimeError on failure)."""
+    p = cur.execute("SELECT * FROM file_products WHERE id=? AND active=1", (prod_id,)).fetchone()
+    if not p:
+        raise RuntimeError("Product not found")
+    if not osint_is_configured():
+        raise RuntimeError("API service is not configured. Contact support.")
+    endpoint = ''
+    try: endpoint = (p['api_endpoint'] or '').strip()
+    except Exception: endpoint = ''
+    if not endpoint:
+        try: endpoint = (p['file_link'] or '').strip()
+        except Exception: endpoint = ''
+    if not endpoint:
+        raise RuntimeError("API endpoint not configured. Contact support.")
+
+    r = get_user(uid)
+    price = int(p['price'])
+    d = int(safe_get(r, "discount", 0) or 0)
+    final = price if d == 0 else int(price * (100 - d) / 100)
+    async with get_user_lock(uid):
+        old_bal = int(safe_get(r, "balance", 0) or 0)
+        cur.execute("UPDATE users SET balance=balance-? WHERE user_id=? AND balance>=?", (final, uid, final))
+        if cur.rowcount != 1:
+            raise RuntimeError(f"Insufficient balance. Need \u20b9{final}")
+        db.commit()
+        record_balance_history(uid, -final, "purchase", "server3:OSINT APIS",
+                               f"API {p['name']}", old_bal, old_bal - final)
+
+    key_info, err = await osint_generate_key(endpoint, days=OSINT_DEFAULT_KEY_DAYS)
+    if not key_info:
+        async with get_user_lock(uid):
+            r2 = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
+            old2 = r2["balance"] if r2 else 0
+            cur.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (final, uid)); db.commit()
+            record_balance_history(uid, final, "refund", "server3:OSINT APIS",
+                                   "Key generation failed", old2, old2 + final)
+        raise RuntimeError(f"API key generation failed. \u20b9{final} refunded. ({str(err)[:80]})")
+
+    oid = generate_unique_order_id(uid)
+    async with get_user_lock(uid):
+        cur.execute("""INSERT INTO orders (user_id, country, year, price, phone, otp, section)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (uid, 'OSINT APIS', now_ist().year, final, p['name'],
+                     (key_info.get('key') or '')[:40], 'OSINT APIS'))
+        cur.execute("UPDATE users SET total_purchases=COALESCE(total_purchases,0)+1, "
+                    "total_spent=COALESCE(total_spent,0)+? WHERE user_id=?", (final, uid))
+        db.commit()
+        r2 = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
+    try:
+        await log_purchase_both(uid, oid, p['name'], final, "N/A", "N/A", "N/A",
+                                r2["balance"] if r2 else 0, status="Completed", is_file=True,
+                                deep_link=build_deep_link_s3(p['section'], p['item_code']))
+    except Exception as e:
+        log.warning(f"OSINT miniapp log: {e}")
+    try: asyncio.create_task(process_referral_bonus(uid, final))
+    except Exception: pass
+
+    api_key = key_info.get('key') or ''
+    endpoint_final = key_info.get('endpoint') or endpoint
+    base_url = get_osint_base_url()
+    return {'ok': True, 'order_id': oid, 'amount': final, 'name': p['name'],
+            'link': f"{base_url}{endpoint_final}?key={api_key}",
+            'api_endpoint': endpoint_final, 'api_key': api_key,
+            'item_code': p['item_code'] or '',
+            'message': 'Purchase successful. API key generated.'}
+
+
 # ============================================================
 # CROSS-MODULE IMPORTS (kept at bottom so circular references between
 # modules resolve safely — every definition above already exists).

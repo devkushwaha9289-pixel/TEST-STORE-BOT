@@ -27,7 +27,12 @@ def ibtn(text, callback_data=None, url=None, emoji=None, style=None, raw_flag=No
     elif emoji:
         kw["text"] = f"{emoji} {text}"
     if style: kw["style"] = style
-    return InlineKeyboardButton(**kw)
+    try:
+        return InlineKeyboardButton(**kw)
+    except TypeError:
+        # Older python-telegram-bot: no `style` / `icon_custom_emoji_id` support.
+        kw.pop("style", None); kw.pop("icon_custom_emoji_id", None)
+        return InlineKeyboardButton(**kw)
 
 def rbtn(text, emoji=None, style=None, custom_id=None):
     kw = {"text": text}

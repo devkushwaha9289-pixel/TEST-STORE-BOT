@@ -1043,6 +1043,10 @@ async def handle_admin_action(update, context):
         temp_data[uid]['admin_action'] = 'bc_btn_menu'
         await q.message.reply_text(f"{emo('✅')} Media skipped.", parse_mode="HTML",
                                     reply_markup=bcast_btn_action_kb()); return
+    if data == "bc_btn_menu" and uid in temp_data:
+        temp_data[uid]['admin_action'] = 'bc_btn_menu'
+        await q.message.reply_text(f"<b>{emo('🔘')} Button menu</b>", parse_mode="HTML",
+                                    reply_markup=bcast_btn_action_kb()); return
     if data == "bc_add_btn" and uid in temp_data:
         if len(temp_data[uid].get('bcast_buttons', [])) >= 6:
             try: await q.answer("Max 6!", show_alert=True)

@@ -5,6 +5,8 @@ VILLAGEE SMS SHOP v28.1 — database.py
 SQLite schema/migrations plus settings, user, admin and ban helpers.
 """
 
+import os, time
+
 # ============================================================
 # DB HELPERS + SCHEMA
 # ============================================================

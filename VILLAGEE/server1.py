@@ -286,13 +286,13 @@ async def process_lzt_buy(update, item_id, price_str, country):
                                        [ibtn("HOME","home",emoji="🏠",style="primary")]])
             low = str(err_text).lower()
             if "password" in low:
-                msg = f"{emo('⚠️')} <b>Purchase skipped and refunded.</b>\\nThis Server 1 listing requires a seller login password."
+                msg = f"{emo('⚠️')} <b>Purchase skipped and refunded.</b>\nThis Server 1 listing requires a seller login password."
             elif "balance" in low or "средств" in low or "not enough" in low:
-                msg = f"{emo('⚠️')} <b>Server 1 Maintenance.</b>\\nServer 1 reported insufficient API balance. Your ₹{fp} was refunded."
+                msg = f"{emo('⚠️')} <b>Server 1 Maintenance.</b>\nServer 1 reported insufficient API balance. Your ₹{fp} was refunded."
             elif "timeout" in low:
-                msg = f"{emo('⚠️')} <b>Server 1 is slow right now.</b>\\nYour ₹{fp} was refunded. Please retry shortly."
+                msg = f"{emo('⚠️')} <b>Server 1 is slow right now.</b>\nYour ₹{fp} was refunded. Please retry shortly."
             else:
-                msg = f"{emo('❌')} <b>Purchase Failed.</b>\\nYour ₹{fp} was refunded."
+                msg = f"{emo('❌')} <b>Purchase Failed.</b>\nYour ₹{fp} was refunded."
             await _show_status_rich(uid, msg, edit_query=q, reply_markup=kb.to_dict())
             return
         pid = lzt_purchase_item_id(br, item_id)

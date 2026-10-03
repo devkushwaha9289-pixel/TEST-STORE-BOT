@@ -5,7 +5,7 @@ VILLAGEE SMS SHOP v28.1 — context.py
 Multi-bot context (contextvars, DB/cursor proxies, bot registry, BotContext).
 """
 
-import os, json, sqlite3, contextvars, aiohttp
+import os, json, asyncio, sqlite3, contextvars, aiohttp
 from telegram import Update
 
 # ============================================================

@@ -11,21 +11,49 @@ from telegram import InlineKeyboardMarkup
 # ============================================================
 # CALLBACK HANDLER
 # ============================================================
+def _late_answer(data):
+    """Buttons whose handler may show an alert (must be the FIRST q.answer)."""
+    return (data in ("noop", "wa_notify", "verify_join", "osint_show_docs", "dep_upi", "dep_paytm",
+                     "dep_manual_upi", "bc_done", "lzt_all_countries", "lzt_refresh")
+            or data.startswith(("pkp_", "mkp_", "kp_", "bc_", "adm_", "manup_", "oakp_", "dep_acc|", "dep_rej|")))
+
+
 async def on_callback(update, context):
+    """Wrapper: guarantees the button spinner is always cleared."""
+    q = update.callback_query
+    data = (q.data or "") if q else ""
+    try:
+        await _on_callback_impl(update, context)
+    finally:
+        if q is not None and _late_answer(data):
+            try: await q.answer()
+            except Exception: pass
+
+
+async def _on_callback_impl(update, context):
     q = update.callback_query
     data = q.data or ""
     u = update.effective_user; uid = u.id
-    try: await q.answer()
-    except: pass
     ensure_user(uid, u.first_name or "", u.username or "", u.last_name or "")
-    if is_banned(uid): return
+    if is_banned(uid):
+        try: await q.answer()
+        except: pass
+        return
     now = time.time()
-    if uid in user_spam and now - user_spam[uid] < 0.3: return
+    if uid in user_spam and now - user_spam[uid] < 0.3:
+        try: await q.answer()
+        except: pass
+        return
     user_spam[uid] = now
     if not is_bot_online() and not is_admin(uid):
         try: await q.answer("Maintenance", show_alert=True)
         except: pass
         return
+    # Alerts below must be the FIRST answer to a query, so only
+    # acknowledge up-front when no alert can follow.
+    if not _late_answer(data):
+        try: await q.answer()
+        except: pass
 
     # ⭐ FORCE JOIN HARD ENFORCEMENT (v28.0)
     force_join_bypass = (
@@ -367,9 +395,9 @@ async def on_callback(update, context):
         min_d = get_min_deposit()
         deposit_input[uid] = {'step': 'paytm_keypad', 'val': '0'}
         await q.message.reply_text(
-            f"<b>{emo('💳')} PAYTM AUTOMATIC — AMOUNT</b>\\n\\n"
-            f"{emo('💰')} <code>₹0</code>\\n\\n"
-            f"{emo('📉')} Min ₹{min_d}\\n\\n"
+            f"<b>{emo('💳')} PAYTM AUTOMATIC — AMOUNT</b>\n\n"
+            f"{emo('💰')} <code>₹0</code>\n\n"
+            f"{emo('📉')} Min ₹{min_d}\n\n"
             "Payment will be checked automatically.",
             parse_mode="HTML", reply_markup=keypad_kb("pkp_"))
         return
@@ -397,8 +425,8 @@ async def on_callback(update, context):
         st['val'] = cv
         try:
             await q.edit_message_text(
-                f"<b>{emo('💳')} PAYTM AUTOMATIC — AMOUNT</b>\\n\\n"
-                f"{emo('💰')} <code>₹{cv}</code>\\n\\n"
+                f"<b>{emo('💳')} PAYTM AUTOMATIC — AMOUNT</b>\n\n"
+                f"{emo('💰')} <code>₹{cv}</code>\n\n"
                 f"{emo('👉')} Tap ✅ to continue.",
                 parse_mode="HTML", reply_markup=keypad_kb("pkp_"))
         except: pass

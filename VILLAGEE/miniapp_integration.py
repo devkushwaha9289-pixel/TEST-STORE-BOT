@@ -11,7 +11,8 @@ from telegram import (
 )
 from telegram.ext import CommandHandler
 
-MINIAPP_URL = "https://test-store-bot-1.onrender.com"
+import os
+MINIAPP_URL = os.getenv("MINIAPP_URL", "https://test-store-bot-1.onrender.com").rstrip("/")
 MINIAPP_BUTTON_TEXT = "🛍️ Shop"
 
 
