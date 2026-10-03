@@ -541,10 +541,13 @@ async def handle_admin_action(update, context):
     if data == "adm_gmail_toggle":
         ns = 'off' if is_gmail_verify_enabled() else 'on'
         set_setting('gmail_verify_enabled', ns)
-        try: await q.answer(f"FamPay {ns.upper()}", show_alert=True)
+        # Keep the user-facing FamPay Automatic switch in sync with the
+        # legacy Gmail/FamPay verification toggle.
+        set_setting('fampay_status', ns)
+        try: await q.answer(f"FamPay Automatic {ns.upper()}", show_alert=True)
         except: pass
         await log_admin_action(uid, "Toggle FamPay", ns.upper())
-        await view_admin_gmail_menu(update); return
+        await view_admin_payment_methods(update); return
     if data == "adm_gmail_test":
         try: await q.answer("Testing...")
         except: pass
