@@ -5,7 +5,7 @@ VILLAGEE SMS SHOP v28.1 — payments.py
 Keypad, UPI auto-deposit, UTR/proof handling, referral bonus, balance transfer.
 """
 
-import re, time, asyncio
+import re, time, asyncio, sqlite3
 from html import escape
 from telegram import InlineKeyboardMarkup
 
@@ -75,15 +75,31 @@ async def complete_upi_order(oid, uid, amount, qr_msg_id=None, source="fampay_ap
     return True
 
 async def show_upi_qr(chat_id, uid, amount):
-    oid = generate_unique_order_id(uid)
+    # Reuse one recent pending FamPay order for the same user/amount.
+    existing = get_active_upi_order(uid, "fampay", amount)
+    oid = existing["order_id"] if existing else generate_unique_order_id(uid)
     upi_id = get_fampay_upi_id()
     qr_bytes = None
     try:
         if QR_AVAILABLE:
             qr_bytes = await asyncio.to_thread(generate_qr_png_bytes, upi_id, str(amount), oid, UPI_MERCHANT_NAME)
     except Exception as e: log.warning(f"QR: {e}")
-    cur.execute("""INSERT OR REPLACE INTO upi_orders (order_id, user_id, amount, status, qr_msg_id, created_ts)
-        VALUES (?,?,?,?,?,?)""", (oid, uid, amount, "pending", 0, time.time())); db.commit()
+    if not existing:
+        try:
+            cur.execute("""INSERT INTO upi_orders
+                (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
+                VALUES (?,?,?,?,?,?,?)""",
+                (oid, uid, amount, "pending", 0, time.time(), "fampay"))
+            db.commit()
+        except sqlite3.IntegrityError:
+            db.rollback()
+            existing = get_active_upi_order(uid, "fampay", amount)
+            if not existing:
+                raise
+            oid = existing["order_id"]
+    else:
+        cur.execute("UPDATE upi_orders SET qr_msg_id=0 WHERE order_id=?", (oid,))
+        db.commit()
     usdt_amt = round(amount / get_rate(), 2)
     msg = (f"<b>{emo('💳')} Secure UPI (15-Min)</b>\n\n"
            f"{emo('💰')} Amount: <b>₹{amount}</b> (≈ ${usdt_amt})\n"
@@ -495,7 +511,7 @@ from config import (
 )
 from context import cur, db
 from database import (
-    get_fampay_upi_id, get_min_deposit, get_rate, get_transfer_fee, get_user,
+    get_active_upi_order, get_fampay_upi_id, get_min_deposit, get_rate, get_transfer_fee, get_user,
     is_txn_used_by_other_order, is_utr_used_by_other_order, safe_get, update_balance
 )
 from emojis import emo
