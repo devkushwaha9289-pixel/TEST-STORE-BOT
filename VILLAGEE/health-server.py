@@ -190,13 +190,13 @@ def index():
     <div class="card"><div class="k">Total Bots</div><div class="v">{snap['total_bots']}</div></div>
     <div class="card"><div class="k">Total Users</div><div class="v">{snap['total_users']}</div></div>
     <div class="card"><div class="k">QR Generator</div><div class="v">{'✅ AVAILABLE' if QR_AVAILABLE else '❌ MISSING'}</div></div>
-    <div class="card"><div class="k">LZT Token</div><div class="v">{lzt_token}</div></div>
+    <div class="card"><div class="k">Server 1 Token</div><div class="v">{lzt_token}</div></div>
   </div>
 
   <div class="section-title">⚙️ Service Status</div>
   <div class="grid">
     <div class="card"><div class="k">Bot</div><div class="v">{pill(flags['bot'])}</div></div>
-    <div class="card"><div class="k">Server 1 (LZT)</div><div class="v">{pill(flags['server1'])}</div></div>
+    <div class="card"><div class="k">Server 1</div><div class="v">{pill(flags['server1'])}</div></div>
     <div class="card"><div class="k">Server 2</div><div class="v">{pill(flags['server2'])}</div></div>
     <div class="card"><div class="k">Server 3</div><div class="v">{pill(flags['server3'])}</div></div>
     <div class="card"><div class="k">UPI</div><div class="v">{pill(flags['upi'])}</div></div>

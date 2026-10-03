@@ -44,7 +44,7 @@ PURCHASE_WARNING_ROWS = [
 ]
 
 PANEL_BRANDS = {
-    'lzt.market': 'LZT MARKET', 'grizzlysms.com': 'GRIZZLY SMS',
+    'lzt.market': 'SERVER 1', 'grizzlysms.com': 'GRIZZLY SMS',
     'smspva.com': 'SMSPVA', '5sim.net': '5SIM', 'sms-activate.org': 'SMS-ACTIVATE',
     'sms-man.com': 'SMS-MAN', 'tiger-sms.com': 'TIGER SMS', 'onlinesim.io': 'ONLINESIM',
     'vak-sms.com': 'VAK-SMS', 'smshub.org': 'SMSHUB', 'smspool.net': 'SMSPOOL',
@@ -142,8 +142,48 @@ OSINT_NAME_TO_ENDPOINT = {
     "MOBILE TO RC": "/vehicle",
 }
 
-DAYBREAK_OPTIONS = ("any", 1, 7, 14, 30)
-DEFAULT_DAYBREAK = 1
+# Daybreak = minimum time since the listing was last edited.
+# "any" = no limit. Numbers are DAYS (1 day = 86400 seconds).
+DAYBREAK_OPTIONS = ("any", 1, 2, 3, 7, 14, 30)
+DEFAULT_DAYBREAK = "any"
+DAY_SECONDS = 86400
+
+def normalize_daybreak(value, default=None):
+    """'any' | day-count (1,2,3,7,14,30) | seconds (86400, 172800, ...) -> 'any' or int days."""
+    if default is None:
+        default = DEFAULT_DAYBREAK
+    if value is None:
+        return default
+    raw = str(value).strip().lower().replace("days", "").replace("day", "").replace("d", "").replace("s", "").strip() \
+        if str(value).strip().lower() not in ("any", "all") else "any"
+    if raw in ("any", "all"):
+        return "any"
+    if raw == "":
+        return default
+    try:
+        n = int(float(raw))
+    except Exception:
+        return default
+    if n in DAYBREAK_OPTIONS:
+        return n
+    if n >= DAY_SECONDS and n % DAY_SECONDS == 0 and (n // DAY_SECONDS) in DAYBREAK_OPTIONS:
+        return n // DAY_SECONDS
+    return default
+
+def parse_daybreak_input(text):
+    """Strict parser for admin input. Returns 'any' or int days, or raises ValueError."""
+    v = normalize_daybreak(text, default="__bad__")
+    if v == "__bad__":
+        raise ValueError("bad daybreak")
+    return v
+
+def daybreak_seconds(value):
+    v = normalize_daybreak(value)
+    return 0 if v == "any" else int(v) * DAY_SECONDS
+
+def daybreak_label(value):
+    v = normalize_daybreak(value)
+    return "Any" if v == "any" else f"{v}d ({int(v) * DAY_SECONDS}s)"
 # Listing eligibility: last edited time must be older than 24 hours.
 LAST_EDIT_MIN_AGE_SECONDS = int(os.getenv("LAST_EDIT_MIN_AGE_SECONDS", "86400"))
 

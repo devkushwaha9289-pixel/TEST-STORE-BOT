@@ -15,7 +15,6 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from io import BytesIO
 from urllib.parse import quote
-import qrcode
 
 import requests
 from telegram import InlineKeyboardMarkup
@@ -32,14 +31,8 @@ def _build_paytm_upi_url(upi: str, order_id: str, amount, note: str = "Payment")
 
 
 def _make_paytm_qr_png(upi: str, order_id: str, amount) -> bytes:
-    url = _build_paytm_upi_url(upi, order_id, amount, f"Payment {order_id}")
-    qr = qrcode.QRCode(version=None, box_size=10, border=4)
-    qr.add_data(url)
-    qr.make(fit=True)
-    img = qr.make_image()
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
+    # Same URL as the Mini App / link fallback, rendered with the shared robust QR helper.
+    return make_qr_png_bytes(_build_paytm_upi_url(upi, order_id, amount, f"Payment {order_id}"))
 
 
 async def check_paytm_status(mid: str, order_id: str) -> dict:
@@ -212,10 +205,9 @@ async def show_paytm_qr(chat_id, uid, amount):
     oid = existing["order_id"] if existing else generate_unique_order_id(uid)
     qr_bytes = None
     try:
-        if QR_AVAILABLE:
-            qr_bytes = await asyncio.to_thread(_make_paytm_qr_png, upi_id, oid, amount)
+        qr_bytes = await asyncio.to_thread(_make_paytm_qr_png, upi_id, oid, amount)
     except Exception as e:
-        log.warning("Paytm QR: %s", e)
+        log.error("Paytm QR generate failed: %s", e)
 
     if not existing:
         try:
@@ -255,16 +247,8 @@ async def show_paytm_qr(chat_id, uid, amount):
     qr_msg_id = None
     sent = False
     if qr_bytes:
-        try:
-            r = await _tg_send_photo_buffer(
-                uid, qr_bytes, msg, reply_markup=kb.to_dict()
-            )
-            d = r.json()
-            if d.get("ok"):
-                qr_msg_id = d.get("result", {}).get("message_id")
-                sent = True
-        except Exception as e:
-            log.warning("Paytm QR send: %s", e)
+        qr_msg_id = await send_qr_photo(uid, qr_bytes, msg, reply_markup=kb.to_dict())
+        sent = bool(qr_msg_id)
 
     if not sent:
         upi_url = create_upi_url(
@@ -288,6 +272,8 @@ async def show_paytm_qr(chat_id, uid, amount):
             if d.get("ok"):
                 qr_msg_id = d.get("result", {}).get("message_id")
                 sent = True
+            else:
+                log.warning("Paytm message rejected: %s", d.get("description"))
         except Exception as e:
             log.warning("Paytm message send: %s", e)
 
@@ -378,8 +364,8 @@ from database import (
 from emojis import emo
 from payments import complete_upi_order
 from fampay import _send_double_payment_alert, _send_mismatch_alert
-from rich_ui import _tg_post, _tg_send_photo_buffer
+from rich_ui import _tg_post, _tg_send_photo_buffer, send_qr_photo
 from utils import (
-    QR_AVAILABLE, create_upi_url, generate_qr_png_bytes,
+    QR_AVAILABLE, create_upi_url, generate_qr_png_bytes, make_qr_png_bytes,
     generate_unique_order_id,
 )

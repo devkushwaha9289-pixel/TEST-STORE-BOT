@@ -18,11 +18,10 @@ async def show_manual_upi_qr(chat_id, uid, amount):
     upi_id = get_manual_upi_id()
     qr_bytes = None
     try:
-        if QR_AVAILABLE:
-            qr_bytes = await asyncio.to_thread(
-                generate_qr_png_bytes, upi_id, str(amount), oid, UPI_MERCHANT_NAME)
+        qr_bytes = await asyncio.to_thread(
+            generate_qr_png_bytes, upi_id, str(amount), oid, UPI_MERCHANT_NAME)
     except Exception as e:
-        log.warning(f"Manual QR: {e}")
+        log.error(f"Manual QR generate failed: {e}")
 
     # Save to DB with status manual_pending
     cur.execute("""INSERT OR REPLACE INTO upi_orders
@@ -57,11 +56,7 @@ async def show_manual_upi_qr(chat_id, uid, amount):
 
     sent = False
     if qr_bytes:
-        try:
-            r = await _tg_send_photo_buffer(uid, qr_bytes, msg, reply_markup=kb.to_dict())
-            d = r.json()
-            if d.get("ok"): sent = True
-        except: pass
+        sent = bool(await send_qr_photo(uid, qr_bytes, msg, reply_markup=kb.to_dict()))
     if not sent:
         upi_url = create_upi_url(upi_id, str(amount), oid, UPI_MERCHANT_NAME)
         try:
@@ -401,7 +396,7 @@ from history import record_balance_history
 from logs import _full_name, _now_str, log_admin_action, log_deposit
 from payments import process_referral_bonus
 from rich_ui import (
-    _deliver_rich_photo_to_target, _tg_post, _tg_send_photo_buffer, make_heading,
+    _deliver_rich_photo_to_target, _tg_post, _tg_send_photo_buffer, send_qr_photo, make_heading,
     make_table, send_rich_async
 )
 from state import get_user_lock, manual_upi_owner_state, manual_upi_pending

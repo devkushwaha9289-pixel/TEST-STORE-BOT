@@ -1,0 +1,10 @@
+UPDATE — fixes (Hinglish)
+1. QR: FamPay / Paytm / Manual teeno bot QR ab naye robust sender se jaate hain (fallback + log). Mini app QR server se banta hai (data URI).
+   -> pip install -r requirements.txt  (qrcode[pil], Pillow, pypng zaroori)
+2. Mini app: bot ka naam token se (getMe) auto fetch. Admin > Settings me MINI APP LOGO / MINI APP NAME buttons.
+3. Daybreak: any / 1 / 2 / 3 / 7 / 14 / 30 din (1 din = 86400s). Admin seconds bhi bhej sakta hai (86400, 172800...).
+   Country flag: account list me ab sirf 2 (1 premium + 1 normal).
+4. Paytm: TODAY / THIS MONTH / LAST MONTH history (Payment Methods + FamPay menu). FamPay me LAST MONTH TX bhi.
+   Daily 7:00 PM IST: har bot ka total selling + total deposit statement owner + master owner ko.
+5. Broadcast: image/video + message dono jaate hain (long text / rich button me media pehle, message baad me). ADD FILE se document bhi.
+   "LZT" naam visible text se hata diya, sab jagah SERVER 1.

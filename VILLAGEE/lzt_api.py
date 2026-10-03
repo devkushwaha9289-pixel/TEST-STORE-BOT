@@ -159,25 +159,17 @@ def resolve_lzt_token():
     return ""
 
 def _normalize_daybreak(value):
-    if value is None:
-        return DEFAULT_DAYBREAK
-    raw = str(value).strip().lower()
-    if raw in ("any", "all", ""):
-        return "any" if raw in ("any", "all") else DEFAULT_DAYBREAK
-    try:
-        n = int(raw)
-    except Exception:
-        return DEFAULT_DAYBREAK
-    return n if n in DAYBREAK_OPTIONS else DEFAULT_DAYBREAK
+    return normalize_daybreak(value)
 
 def get_user_daybreak(uid):
-    # Deprecated compatibility helper: daybreak is no longer sent to LZT.
-    return "any"
+    """Per-user daybreak choice; falls back to the admin default."""
+    v = get_setting(f"lzt_daybreak_{uid}", "")
+    if str(v).strip() == "":
+        v = get_setting("lzt_default_daybreak", str(DEFAULT_DAYBREAK))
+    return normalize_daybreak(v)
 
 def set_user_daybreak(uid, value):
-    # Deprecated compatibility helper: keep UI/settings compatible, but do not
-    # use this value for LZT stock requests.
-    set_setting(f"lzt_daybreak_{uid}", "any")
+    set_setting(f"lzt_daybreak_{uid}", str(normalize_daybreak(value)))
 
 def lzt_item_last_edited_ts(item):
     """Return the listing's last-edited timestamp as Unix seconds.
@@ -245,13 +237,16 @@ def lzt_item_age_seconds(item):
     return lzt_item_last_edited_age_seconds(item)
 
 
-def lzt_item_is_eligible(item):
-    """Eligible only when listing last-edited age is > 86400 seconds."""
+def lzt_item_is_eligible(item, daybreak="any"):
+    """Eligible when the listing's last-edited age reaches the chosen daybreak
+    (any = always, 1 = 86400s, 7 = 604800s ...). Returns (ok, age_seconds)."""
     age = lzt_item_last_edited_age_seconds(item)
+    need = daybreak_seconds(daybreak)
+    if need <= 0:
+        return True, age
     if age is None:
         return (False, None)
-
-    return (age > LAST_EDIT_MIN_AGE_SECONDS), age
+    return (age >= need), age
 
 
 def lzt_currency_to_inr_rate(currency):
@@ -521,6 +516,11 @@ def lzt_item_has_geoblock(item):
     return as_boolish(item.get("telegram_geo_block", item.get("geo_block", item.get("geoblock"))))
 
 def lzt_item_matches_filters(item, flt):
+    need = daybreak_seconds(flt.get("offline", "any"))
+    if need > 0:
+        age = lzt_item_last_edited_age_seconds(item)
+        if age is None or age < need:
+            return False
     sp = flt.get("spam","any")
     if sp != "any":
         hs = lzt_item_has_spam(item)
@@ -545,23 +545,22 @@ def lzt_item_matches_filters(item, flt):
 
 def filter_lzt_items(items, flt): return [i for i in items if lzt_item_matches_filters(i, flt)]
 
-def filter_lzt_eligible(items):
+def filter_lzt_eligible(items, daybreak="any"):
     out = []
     for it in items:
-        ok, _ = lzt_item_is_eligible(it)
+        ok, _ = lzt_item_is_eligible(it, daybreak)
         if ok: out.append(it)
     return out
 
 def get_user_filters(uid):
-    # Daybreak/offline is intentionally disabled. Stock eligibility is based
-    # only on edit_date age (> 86400 seconds).
-    default = {"spam":"any","geoblock":"no","offline":"any","login_mail":"any","premium":"any","sort":"az"}
+    default = {"spam":"any","geoblock":"no","offline":str(get_user_daybreak(uid)),
+               "login_mail":"any","premium":"any","sort":"az"}
     if uid not in user_lzt_filters:
         user_lzt_filters[uid] = default.copy()
     else:
         for k, v in default.items():
             user_lzt_filters[uid].setdefault(k, v)
-        user_lzt_filters[uid]["offline"] = "any"
+        user_lzt_filters[uid]["offline"] = str(normalize_daybreak(user_lzt_filters[uid].get("offline")))
     return user_lzt_filters[uid]
 
 def get_filter_key(flt):
@@ -579,9 +578,7 @@ async def cache_lzt_stock_loop():
                 parts = fkey.split("_")
                 sp, gb, off, lm, pr = parts[0],parts[1],parts[2],parts[3],parts[4]
                 iso = LZT_COUNTRY_CATALOG.get(cn, ("US","🇺🇸","1"))[0]
-                # IMPORTANT: daybreak is intentionally NOT sent to LZT.
-                # We fetch the country stock first and apply only the local
-                # edit_date age rule below.
+                # Daybreak is applied locally from each listing's edit_date (see lzt_item_matches_filters).
                 params = {"country[]":iso,"spam":sp if sp != "any" else None,
                           "nsb":1,"pmin":0.01,"pmax":1000,"page":1,"per_page":40,
                           "password":"no","currency":LZT_PRICE_CURRENCY}
@@ -806,6 +803,7 @@ def resolve_lzt_user_refresh(uid, key):
 # ============================================================
 from config import (
     DAYBREAK_OPTIONS, DEFAULT_DAYBREAK, LAST_EDIT_MIN_AGE_SECONDS,
+    daybreak_label, daybreak_seconds, normalize_daybreak,
     LAST_EDIT_FIELD_CANDIDATES, LZT_BASE_URL, LZT_CACHE_BATCH_SIZE, LZT_CACHE_CONCURRENCY,
     LZT_CACHE_IDLE_SECONDS, LZT_FAST_BUY_RETRIES, LZT_FORCE_IPV4, LZT_MAX_RETRIES,
     LZT_MIN_REQUEST_INTERVAL, LZT_PRICE_CURRENCY, LZT_PROXY, LZT_RATE_LIMIT_COOLDOWN,

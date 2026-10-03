@@ -389,12 +389,12 @@ async def handle_admin_text(update, context):
         temp_data.pop(uid, None); return
     if act in ('lzt_set_default_daybreak', 'edit_default_daybreak'):
         try:
-            v = int(text.strip())
-            if v not in DAYBREAK_OPTIONS: raise ValueError()
+            from config import parse_daybreak_input, daybreak_label
+            v = parse_daybreak_input(text.strip())
             set_setting("lzt_default_daybreak", str(v))
-            await msg.reply_text(f"{emo('✅')} {v}d", parse_mode="HTML")
+            await msg.reply_text(f"{emo('✅')} Daybreak: {daybreak_label(v)}", parse_mode="HTML")
             await log_admin_action(uid, "Set Daybreak", str(v))
-        except: await msg.reply_text(f"{emo('❌')} Use 1/7/14/30.", parse_mode="HTML"); return
+        except: await msg.reply_text(f"{emo('❌')} Use: any / 1 / 2 / 3 / 7 / 14 / 30 (days) or 86400 / 172800 (seconds).", parse_mode="HTML"); return
         temp_data.pop(uid, None); return
     if act == 'lzt_set_cmark':
         p = text.strip().split()
@@ -629,7 +629,7 @@ async def handle_admin_text(update, context):
             await msg.reply_text(f"{emo('❌')} {html_safe_error(e)}", parse_mode="HTML")
         temp_data.pop(uid, None); return
     if act in ('adm_usdtrate','edit_transferfee','edit_mindeposit','edit_c1','edit_c2',
-               'edit_support','edit_updateurl','edit_maintimg'):
+               'edit_support','edit_updateurl','edit_maintimg','edit_logo','edit_storename'):
         try:
             if act == 'adm_usdtrate':
                 set_setting('usdt_rate', float(text.strip()))
@@ -658,6 +658,18 @@ async def handle_admin_text(update, context):
             elif act == 'edit_maintimg':
                 set_setting('maintenance_image', text.strip())
                 await msg.reply_text(f"{emo('✅')}", parse_mode="HTML")
+            elif act == 'edit_logo':
+                v = text.strip()
+                if v.lower() in ('reset', 'default', 'none', '-'): v = ''
+                elif not v.lower().startswith(('http://', 'https://')):
+                    raise ValueError("Send a valid image link starting with https://")
+                set_setting('store_logo', v)
+                await msg.reply_text(f"{emo('✅')} Logo saved. Reopen the Mini App to see it.", parse_mode="HTML")
+            elif act == 'edit_storename':
+                v = text.strip()[:40]
+                if v.lower() in ('reset', 'default', 'none', '-'): v = ''
+                set_setting('store_name', v)
+                await msg.reply_text(f"{emo('✅')} Name saved.", parse_mode="HTML")
             await log_admin_action(uid, act, text[:60])
         except Exception as e:
             await msg.reply_text(f"{emo('❌')} {html_safe_error(e)}", parse_mode="HTML")

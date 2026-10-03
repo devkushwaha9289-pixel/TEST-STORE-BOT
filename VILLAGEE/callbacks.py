@@ -292,7 +292,7 @@ async def _on_callback_impl(update, context):
         ss = "🟢 NO SPAM" if flt["spam"]=="no" else ("🔴 SPAM" if flt["spam"]=="yes" else "🔵 ANY")
         gs = "🟢 NO GEO" if flt["geoblock"]=="no" else ("🔴 GEO" if flt["geoblock"]=="yes" else "🔵 ANY")
         ms = "🟢 MAIL" if flt["login_mail"]=="yes" else ("🔴 NO MAIL" if flt["login_mail"]=="no" else "🔵 ANY")
-        ds = f"🗓️ ≥{_safe_daybreak(flt.get('offline'))}d"
+        ds = "🗓️ " + daybreak_label(flt.get('offline'))
         ps = "🟢 PREM" if flt["premium"]=="yes" else ("🔴 NO PREM" if flt["premium"]=="no" else "🔵 ANY")
         kb = InlineKeyboardMarkup([
             [ibtn(f"Spam: {ss}","lzt_flt|spam",emoji="🚫",style="primary")],
@@ -315,14 +315,14 @@ async def _on_callback_impl(update, context):
         elif at == "premium": flt["premium"] = "no" if flt["premium"]=="yes" else ("any" if flt["premium"]=="no" else "yes")
         elif at == "offline":
             cv = _safe_daybreak(flt.get("offline"))
-            idx = DAYBREAK_OPTIONS.index(cv)
+            idx = DAYBREAK_OPTIONS.index(cv) if cv in DAYBREAK_OPTIONS else 0
             nx = DAYBREAK_OPTIONS[(idx + 1) % len(DAYBREAK_OPTIONS)]
             flt["offline"] = str(nx); set_user_daybreak(uid, nx)
         active_filter_keys.add(get_filter_key(flt))
         ss = "🟢 NO SPAM" if flt["spam"]=="no" else ("🔴 SPAM" if flt["spam"]=="yes" else "🔵 ANY")
         gs = "🟢 NO GEO" if flt["geoblock"]=="no" else ("🔴 GEO" if flt["geoblock"]=="yes" else "🔵 ANY")
         ms = "🟢 MAIL" if flt["login_mail"]=="yes" else ("🔴 NO MAIL" if flt["login_mail"]=="no" else "🔵 ANY")
-        ds = f"🗓️ ≥{_safe_daybreak(flt.get('offline'))}d"
+        ds = "🗓️ " + daybreak_label(flt.get('offline'))
         ps = "🟢 PREM" if flt["premium"]=="yes" else ("🔴 NO PREM" if flt["premium"]=="no" else "🔵 ANY")
         kb = InlineKeyboardMarkup([
             [ibtn(f"Spam: {ss}","lzt_flt|spam",emoji="🚫",style="primary")],
@@ -547,7 +547,7 @@ async def _on_callback_impl(update, context):
     if (data.startswith("adm_") or data.startswith("dep_acc|") or data.startswith("dep_rej|") or
         data.startswith("bc_") or data.startswith("fp_") or data.startswith("cat_") or
         data.startswith("stock_") or data.startswith("addcat|") or data.startswith("addcat_zip|") or
-        data.startswith("log_src_") or data.startswith("tx_page|") or data.startswith("db_set|") or
+        data.startswith("log_src_") or data.startswith("tx_page|") or data.startswith("ptx_page|") or data.startswith("db_set|") or
         data.startswith("gb_") or data.startswith("s2_") or data.startswith("s3_") or
         data.startswith("zip_") or
         data.startswith("manup_") or data.startswith("oakp_") or
@@ -565,7 +565,7 @@ from admin_actions import handle_admin_action
 from admin_panel import view_admin_panel, view_admin_payment_methods
 from buttons import ibtn, main_reply_kb, redeem_reply_kb
 from commands import view_all_stock
-from config import DAYBREAK_OPTIONS, OTP_REGEX, log
+from config import DAYBREAK_OPTIONS, OTP_REGEX, daybreak_label, log
 from context import cur, db
 from database import (
     ensure_user, get_min_deposit, get_rate, get_transfer_fee, get_user, get_setting, is_admin, is_banned,

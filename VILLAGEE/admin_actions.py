@@ -515,9 +515,17 @@ async def handle_admin_action(update, context):
     if data == "adm_gmail_menu": await view_admin_gmail_menu(update); return
     if data == "adm_tx_today": await view_admin_tx_today(update, 1); return
     if data == "adm_tx_month": await view_admin_tx_month(update, 1); return
+    if data == "adm_tx_last": await view_admin_tx_last(update, 1); return
+    if data == "adm_ptx_today": await view_admin_paytm_tx(update, "today", 1); return
+    if data == "adm_ptx_month": await view_admin_paytm_tx(update, "month", 1); return
+    if data == "adm_ptx_last": await view_admin_paytm_tx(update, "last", 1); return
+    if data == "adm_payment_methods_back": await view_admin_payment_methods(update); return
+    if data.startswith("ptx_page|"):
+        p = data.split("|"); await view_admin_paytm_tx(update, p[1], int(p[2])); return
     if data.startswith("tx_page|"):
         p = data.split("|")
         if p[1] == "today": await view_admin_tx_today(update, int(p[2]))
+        elif p[1] == "last": await view_admin_tx_last(update, int(p[2]))
         else: await view_admin_tx_month(update, int(p[2]))
         return
     if data == "adm_gmail_set_email":
@@ -613,17 +621,19 @@ async def handle_admin_action(update, context):
             reply_markup=InlineKeyboardMarkup([[ibtn("CANCEL","cancel",emoji="🚫",style="danger")]])); return
     if data == "adm_set_default_daybreak":
         temp_data[uid] = {'admin_action': 'lzt_set_default_daybreak'}
-        await q.message.reply_text(f"{emo('🗓️')} Send: 1/7/14/30", parse_mode="HTML",
+        await q.message.reply_text(f"{emo('🗓️')} Choose daybreak (1 day = 86400s):", parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [ibtn("1","db_set|1",emoji="1️⃣",style="primary"), ibtn("7","db_set|7",emoji="7️⃣",style="primary")],
-                [ibtn("14","db_set|14",emoji="🔢",style="primary"), ibtn("30","db_set|30",emoji="3️⃣",style="primary")],
+                [ibtn("ANY","db_set|any",emoji="🔢",style="success"), ibtn("1 DAY","db_set|1",emoji="1️⃣",style="primary")],
+                [ibtn("2 DAYS","db_set|2",emoji="🔢",style="primary"), ibtn("3 DAYS","db_set|3",emoji="🔢",style="primary")],
+                [ibtn("7 DAYS","db_set|7",emoji="7️⃣",style="primary"), ibtn("14 DAYS","db_set|14",emoji="🔢",style="primary")],
+                [ibtn("30 DAYS","db_set|30",emoji="3️⃣",style="primary")],
                 [ibtn("CANCEL","cancel",emoji="🚫",style="danger")]])); return
     if data.startswith("db_set|"):
         try:
-            v = int(data.split("|", 1)[1])
-            if v not in DAYBREAK_OPTIONS: raise ValueError()
+            from config import parse_daybreak_input, daybreak_label
+            v = parse_daybreak_input(data.split("|", 1)[1])
             set_setting("lzt_default_daybreak", str(v))
-            try: await q.answer(f"✅ {v}d", show_alert=True)
+            try: await q.answer(f"✅ {daybreak_label(v)}", show_alert=True)
             except: pass
             await log_admin_action(uid, "Set Daybreak", str(v))
         except:
@@ -944,7 +954,9 @@ async def handle_admin_action(update, context):
         'adm_edit_support': ('edit_support', '🔗 New Support URL:'),
         'adm_edit_updateurl': ('edit_updateurl', '🔗 New Update URL:'),
         'adm_edit_maintimg': ('edit_maintimg', '🖼️ New Maint Image URL:'),
-        'adm_edit_default_daybreak': ('edit_default_daybreak', '🗓️ Send: 1/7/14/30'),
+        'adm_edit_logo': ('edit_logo', '🖼️ Send Mini App LOGO link (https://...). Send <code>reset</code> for default:'),
+        'adm_edit_storename': ('edit_storename', '🏷️ Send Mini App store name (or <code>reset</code> to use the bot name):'),
+        'adm_edit_default_daybreak': ('edit_default_daybreak', '🗓️ Send: any / 1 / 2 / 3 / 7 / 14 / 30 (days) — or seconds like 86400'),
         'adm_addcoupon': ('adm_addcoupon', '🎁 Send: <code>CODE amount max_uses</code>'),
     }
     if data in prompts:
@@ -1035,6 +1047,9 @@ async def handle_admin_action(update, context):
     if data == "bc_add_video" and uid in temp_data:
         temp_data[uid]['admin_action'] = 'bc_wait_video'
         await q.message.reply_text(f"{emo('🎬')} Send video:", parse_mode="HTML"); return
+    if data == "bc_add_file" and uid in temp_data:
+        temp_data[uid]['admin_action'] = 'bc_wait_file'
+        await q.message.reply_text(f"{emo('📎')} Send the file (as Document):", parse_mode="HTML"); return
     if data == "bc_add_image" and uid in temp_data:
         temp_data[uid]['admin_action'] = 'bc_wait_image'
         await q.message.reply_text(f"{emo('🎥')} Send image:", parse_mode="HTML"); return
@@ -1201,6 +1216,7 @@ from admin_panel import (
     view_admin_cat_server_select, view_admin_gmail_menu, view_admin_log_menu,
     view_admin_lzt_settings, view_admin_maintenance, view_admin_settings,
     view_admin_stock_all, view_admin_stock_menu, view_admin_tx_month, view_admin_tx_today,
+    view_admin_tx_last, view_admin_paytm_tx, view_admin_payment_methods,
     view_admin_users_list, view_cat_manage, view_userlog_menu
 )
 from backup import create_backup, create_full_backup_zip

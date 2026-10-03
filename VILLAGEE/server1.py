@@ -19,7 +19,7 @@ async def view_buy1_lzt(update, page=1):
             await show_maintenance(uid, "buy1"); return
         if not resolve_lzt_token():
             if is_admin(uid):
-                kb = InlineKeyboardMarkup([[ibtn("SET LZT TOKEN","adm_setlzt_token",emoji="🔑",style="primary")],
+                kb = InlineKeyboardMarkup([[ibtn("SET SERVER 1 TOKEN","adm_setlzt_token",emoji="🔑",style="primary")],
                                            [ibtn("MAIN MENU","home",emoji="🏠",style="primary")]])
                 await send_rich_async(uid, [make_heading(STORE_HEADER, 2),
                     make_paragraph("Server 1 token is not set.")], reply_markup=kb.to_dict(),
@@ -62,8 +62,8 @@ async def _render_lzt_country_page(update, uid, page):
     all_link = f"https://t.me/{current_ctx().username}?start=AllServer1"
     blocks = [make_heading(STORE_HEADER, 2),
               make_table([["ℹ️ INFO","📋 DETAIL"],["💰 Balance", f"₹{bal:.1f}"],
-                          ["🖥️ Server", "SERVER 1 (LZT)"],["📄 Page", f"{page}/{tp}"],
-                          ["🗓️ Daybreak", f"≥{flt['offline']}d"]])]
+                          ["🖥️ Server", "SERVER 1"],["📄 Page", f"{page}/{tp}"],
+                          ["🗓️ Daybreak", daybreak_label(flt['offline'])]])]
     try:
         view_all_block = build_rich_buttons_block([{
             "name": "View All Countries",
@@ -97,7 +97,7 @@ async def _render_lzt_country_page(update, uid, page):
     buttons.append([ibtn("⛶ Show All","lzt_all_countries",emoji="📋",style="danger"),
                     ibtn("🔍 Search","lzt_search_country",emoji="🔍",style="primary")])
     buttons.append([ibtn("MAIN MENU","home",emoji="🏠",style="primary")])
-    fb = f"SERVER 1 — Page {page}/{tp} — ₹{bal:.0f} — Daybreak ≥{flt['offline']}d"
+    fb = f"SERVER 1 — Page {page}/{tp} — ₹{bal:.0f} — Daybreak {daybreak_label(flt['offline'])}"
     await send_rich_async(uid, blocks, reply_markup=InlineKeyboardMarkup(buttons).to_dict(),
                           fallback_text=fb, edit_query=_edit_query_of(update))
 
@@ -116,7 +116,6 @@ async def view_lzt_country(update, iso_code, page=1):
         params = {"country[]":iso_code,"spam":flt["spam"] if flt["spam"] != "any" else None,
                   "nsb":1,"pmin":0.01,"pmax":1000,"page":page,"per_page":40,
                   "password":"no","currency":LZT_PRICE_CURRENCY}
-        if dbv != "any": params["daybreak"] = dbv
         if flt["premium"] != "any": params["premium"] = flt["premium"]
         res = await fetch_lzt_stock_response(params, timeout_total=LZT_STOCK_TIMEOUT, max_retries=LZT_STOCK_RETRIES)
         if lzt_is_rate_limited_response(res):
@@ -163,7 +162,7 @@ async def view_lzt_country(update, iso_code, page=1):
             if sh_p and lzt_item_has_premium(item): bd += "💎"
             if sh_s and lzt_item_has_spam(item): bd += "🚫"
             bt = f" {bd}" if bd else ""
-            gr.append(ibtn(f"✅ {flag}{bt} #{gi} • ₹{fp}", f"lzt_view|{iid}|{country}|{fp}", raw_flag=flag, style="success"))
+            gr.append(ibtn(f"✅{bt} #{gi} • ₹{fp}", f"lzt_view|{iid}|{country}|{fp}", raw_flag=flag, style="success"))
             if len(gr) == 2: buttons.append(gr); gr = []
         if gr: buttons.append(gr)
         nav = []
@@ -200,7 +199,7 @@ async def view_lzt_product(update, item_id, country=None):
         contacts = item.get("telegram_contacts_count", 0)
         r = get_user(uid); bal = safe_get(r, "balance", 0); diff = fp - bal
         pwd = lzt_item_requires_password(item)
-        eligible, age = lzt_item_is_eligible(item)
+        eligible, age = lzt_item_is_eligible(item, get_user_filters(uid).get("offline", "any"))
         iso = LZT_COUNTRY_CATALOG.get(country, ("US","🇺🇸","1"))[0]
         buttons = []
         if pwd: buttons.append([ibtn("🔐 Password Account","noop",style="danger")])
@@ -212,7 +211,7 @@ async def view_lzt_product(update, item_id, country=None):
         buttons.append([ibtn("HOME","home",emoji="🏠",style="primary")])
         info_rows = [["ℹ️ INFO","📋 DETAIL"],["💰 Price", f"₹{fp}"],["💳 Balance", f"₹{bal}"],
                      ["🌎 Country", str(country)],["🆔 Item ID", str(item_id)],
-                     ["⏱️ Age", f"{int(age)}s" if age else "—"],
+                     ["⏱️ Age", (f"{age/86400:.1f}d ({int(age)}s)" if age else "—")],
                      ["🚫 Spam", "YES" if hs else "NO"],["💎 Premium", "YES" if hp else "NO"],
                      ["📧 Mail", "YES" if hm else "NO"],["🌍 Geo", "YES" if hg else "NO"],
                      ["💬 Chats", str(chats)],["📣 Channels", str(channels)],["👥 Contacts", str(contacts)]]
@@ -271,7 +270,7 @@ async def process_lzt_buy(update, item_id, price_str, country):
             cur.execute("UPDATE users SET balance=balance-? WHERE user_id=? AND balance>=?", (fp, uid, fp))
             if cur.rowcount == 0: return
             db.commit()
-            record_balance_history(uid, -fp, "purchase", "server1", f"LZT {item_id}", bal, bal - fp)
+            record_balance_history(uid, -fp, "purchase", "server1", f"SERVER 1 {item_id}", bal, bal - fp)
         await _show_status_rich(uid, f"{emo('⏳')} <b>Purchasing...</b>", edit_query=q)
 
         br = await lzt_fast_buy_item(item_id, mp)
@@ -313,7 +312,7 @@ async def process_lzt_buy(update, item_id, price_str, country):
                     VALUES (?,?,?,?,?,?,?)""", (uid, country, 2024, fp, dp, None, "SERVER1"))
         db.commit()
         r2 = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
-        await log_purchase_both(uid, f"LZT{pid}", country, fp, dp, "N/A", "None",
+        await log_purchase_both(uid, f"S1{pid}", country, fp, dp, "N/A", "None",
                                 r2["balance"] if r2 else 0, status="Completed", is_file=False,
                                 deep_link=build_deep_link_s1("Telegram", country))
 
@@ -323,7 +322,7 @@ async def process_lzt_buy(update, item_id, price_str, country):
             'country': country, 'year': 2024,
             'c_icon': LZT_COUNTRY_CATALOG.get(country, ("", "🌍", ""))[1],
             'twofa': 'None', 'msg_id': None, 'chat_id': uid,
-            'order_id': f"LZT{pid}", 'category': 'Telegram', 'server': 'SERVER1',
+            'order_id': f"S1{pid}", 'category': 'Telegram', 'server': 'SERVER1',
             'phone_num': dp,
         }
 
@@ -367,6 +366,7 @@ async def process_lzt_mass_buy(update, first_item_id, price_str, country):
         pb = {"country[]":iso,"nsb":1,"pmin":0.01,"pmax":1000,"per_page":40,
               "password":"no","currency":LZT_PRICE_CURRENCY}
         cands = []; seen = set()
+        user_flt = get_user_filters(uid)
         for p in range(1, 4):
             res = await fetch_lzt_stock_response(dict(pb, page=p),
                                                   timeout_total=LZT_STOCK_TIMEOUT, max_retries=LZT_STOCK_RETRIES)
@@ -374,7 +374,8 @@ async def process_lzt_mass_buy(update, first_item_id, price_str, country):
                 cid = str(item.get('item_id') or item.get('id') or '')
                 if not cid or cid in seen: continue
                 seen.add(cid)
-                if lzt_final_inr_price(item, get_lzt_markup(country)) == target:
+                if lzt_final_inr_price(item, get_lzt_markup(country)) == target \
+                        and lzt_item_matches_filters(item, user_flt):
                     cands.append(item)
         for item in cands:
             cid = str(item.get('item_id') or item.get('id') or '')
@@ -405,7 +406,7 @@ async def process_lzt_mass_buy(update, first_item_id, price_str, country):
                             VALUES (?,?,?,?,?,?,?)""", (uid, country, 2024, target, dp, None, "SERVER1"))
                 db.commit()
                 r2 = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
-                await log_purchase_both(uid, f"LZT{pid}", country, target, dp, "N/A", "None",
+                await log_purchase_both(uid, f"S1{pid}", country, target, dp, "N/A", "None",
                                         r2["balance"] if r2 else 0, status="Completed", is_file=False,
                                         deep_link=build_deep_link_s1("Telegram", country))
                 active_orders[f"LZT_{pid}"] = {
@@ -414,7 +415,7 @@ async def process_lzt_mass_buy(update, first_item_id, price_str, country):
                     'country': country, 'year': 2024,
                     'c_icon': LZT_COUNTRY_CATALOG.get(country, ("", "🌍", ""))[1],
                     'twofa': 'None', 'msg_id': None, 'chat_id': uid,
-                    'order_id': f"LZT{pid}", 'category': 'Telegram', 'server': 'SERVER1',
+                    'order_id': f"S1{pid}", 'category': 'Telegram', 'server': 'SERVER1',
                     'phone_num': dp,
                 }
                 reserved = False
@@ -509,7 +510,7 @@ async def view_lzt_all_countries(update):
 # ============================================================
 from buttons import ibtn
 from config import (
-    DEFAULT_DAYBREAK, LZT_PRICE_CURRENCY, LZT_STOCK_RETRIES, LZT_STOCK_TIMEOUT,
+    DEFAULT_DAYBREAK, daybreak_label, LZT_PRICE_CURRENCY, LZT_STOCK_RETRIES, LZT_STOCK_TIMEOUT,
     PURCHASE_WARNING_ROWS, STOCK_CACHE_TTL, STORE_HEADER, log
 )
 from context import cur, current_ctx, db
@@ -524,7 +525,7 @@ from lzt_api import (
     get_country_button_code, get_filter_key, get_lzt_markup, get_user_filters,
     get_verified_lzt_otp, lzt_error_text, lzt_fast_buy_item, lzt_final_inr_price,
     lzt_is_rate_limited_response, lzt_item_country_name, lzt_item_has_geoblock,
-    lzt_item_has_mail, lzt_item_has_premium, lzt_item_has_spam, lzt_item_is_eligible,
+    lzt_item_has_mail, lzt_item_has_premium, lzt_item_has_spam, lzt_item_is_eligible, lzt_item_matches_filters,
     lzt_item_requires_password, lzt_market_price, lzt_price_breakdown,
     lzt_purchase_has_error, lzt_purchase_item_id, lzt_rate_limited_message, lzt_request,
     normalize_lzt_phone, resolve_lzt_token, resolve_lzt_user_refresh,

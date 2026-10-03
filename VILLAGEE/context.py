@@ -95,6 +95,8 @@ class BotContext:
         self.cur = self.db.cursor()
         self.app = None; self.telethon_client = None
         self.telethon_loop = None; self.fampay_task = None; self.started = False
+        self.display_name = username
+        self.report_task = None
         tok = _current_bot.set(self)
         try: _init_schema()
         finally: _current_bot.reset(tok)
@@ -103,6 +105,18 @@ class BotContext:
         if self.started: return
         app = build_app_for_ctx(self); self.app = app
         await app.initialize()
+
+        # Bot display name is fetched from the bot token (getMe) and stored for the Mini App.
+        try:
+            me = await app.bot.get_me()
+            self.display_name = (me.first_name or me.username or self.username or "").strip()
+            self.cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                             ("bot_display_name", self.display_name))
+            self.cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                             ("bot_username_live", me.username or self.username or ""))
+            self.db.commit()
+        except Exception as e:
+            log.warning(f"getMe @{self.username}: {e}")
 
         # =====================================================
         # AUTO MINI APP MENU BUTTON
@@ -123,12 +137,26 @@ class BotContext:
         self.fampay_task = None
         log.info(f"💳 FamPay verification via Vercel API @{self.username}")
 
+        # Daily 7 PM IST statement (total selling + total deposit) to the owners.
+        try:
+            from daily_report import daily_statement_loop
+            self.report_task = asyncio.create_task(daily_statement_loop(self))
+        except Exception as e:
+            log.warning(f"daily statement start @{self.username}: {e}")
+
         await app.start()
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         self.started = True
 
     async def stop(self):
         if not self.started: return
+        if getattr(self, "report_task", None):
+            try:
+                self.report_task.cancel()
+                await asyncio.gather(self.report_task, return_exceptions=True)
+            except Exception:
+                pass
+            self.report_task = None
         if self.fampay_task:
             try:
                 self.fampay_task.cancel()

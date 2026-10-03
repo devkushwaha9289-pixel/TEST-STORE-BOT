@@ -122,6 +122,19 @@ async def handle_document(update, context):
     if uid not in temp_data: return
     act = temp_data[uid].get('admin_action')
 
+    if act in ('bc_wait_msg', 'bc_wait_file'):
+        try: _cap = msg.caption_html or msg.caption or ""
+        except: _cap = msg.caption or ""
+        if _cap.strip() or act == 'bc_wait_msg':
+            temp_data[uid]['bcast_text'] = auto_premium(_cap)
+        temp_data[uid]['bcast_media_type'] = 'document'
+        temp_data[uid]['bcast_media_id'] = msg.document.file_id
+        temp_data[uid]['admin_action'] = 'bc_btn_menu'
+        from broadcast import bcast_btn_action_kb
+        await msg.reply_text(f"{emo('✅')} File attached: <code>{(msg.document.file_name or 'file')[:60]}</code>",
+                             parse_mode="HTML", reply_markup=bcast_btn_action_kb())
+        return
+
     if act == 'full_restore_wait':
         if not is_master_owner(uid):
             return

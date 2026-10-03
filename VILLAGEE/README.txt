@@ -19,8 +19,8 @@ backup.py       full ZIP backup/restore + JSON backup/restore
 history.py      balance/section history
 force_join.py   force-join checks
 state.py        shared runtime state
-lzt_api.py      LZT market API layer
-server1.py      SERVER 1 (LZT) views + buy
+lzt_api.py      Server 1 API layer
+server1.py      SERVER 1 views + buy
 server2.py      SERVER 2 views, purchase, admin S2
 server3.py      SERVER 3 file/panel views, purchase, admin S3
 fampay.py       FamPay email parser + IMAP poll

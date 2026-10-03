@@ -39,6 +39,18 @@ TOGGLE_DEFAULTS = {"wa_status": "soon"}
 # ============================================================
 # helpers
 # ============================================================
+DEFAULT_STORE_LOGO = "https://i.ibb.co/pvYN5StT/file-00000000495071fa9b861c6819feb241.png"
+
+
+def _qr_for(url):
+    """Server-side QR (data URI) so the Mini App never depends on an external QR website."""
+    try:
+        from utils import qr_data_uri
+        return qr_data_uri(url)
+    except Exception:
+        return ""
+
+
 def _rowd(r):
     return dict(r) if r is not None else None
 
@@ -67,7 +79,8 @@ async def mini_config(uid):
     on = lambda k, d="on": get_setting(k, d) == "on"
     paytm_ready = bool(get_paytm_mid() and get_paytm_upi_id())
     return {
-        "store_name": "VILLAGEE SMS SHOP",
+        "store_name": (get_setting("store_name", "") or get_setting("bot_display_name", "") or "Store").strip(),
+        "store_logo": (get_setting("store_logo", "") or DEFAULT_STORE_LOGO).strip(),
         "support_url": get_support_url(),
         "contact_1": get_contact_1(),
         "contact_2": get_contact_2(),
@@ -152,6 +165,7 @@ async def mini_deposit_paytm(uid, amount):
         "ok": True, "provider": "paytm", "order_id": oid, "upi_id": upi,
         "amount": amount, "poll": True,
         "upi_url": create_upi_url(upi, str(amount), oid, PAYTM_MERCHANT_NAME),
+        "qr": _qr_for(create_upi_url(upi, str(amount), oid, PAYTM_MERCHANT_NAME)),
         "message": "Pay the exact amount. Paytm status is checked automatically.",
     }
 
@@ -208,6 +222,8 @@ async def mini_deposit_fampay(uid, amount):
         "ok": True, "provider": "fampay", "order_id": oid, "upi_id": upi,
         "amount": amount, "poll": True,
         "upi_url": create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME),
+        "qr": _qr_for(create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME)),
+        "qr": _qr_for(create_upi_url(upi, str(amount), oid, UPI_MERCHANT_NAME)),
         "message": "Pay exact amount, then submit UTR/TXN (or wait for auto-detect).",
     }
 

@@ -8,6 +8,94 @@ Broadcast keyboards, single-bot broadcast and global broadcast.
 import asyncio, aiohttp
 from telegram import InlineKeyboardMarkup
 
+
+# ============================================================
+# UNIFIED SENDER (image / video / FILE + message, always delivers BOTH)
+# ============================================================
+import re as _re
+import requests as _requests
+
+_MEDIA_METHOD = {"photo": ("sendPhoto", "photo"), "video": ("sendVideo", "video"),
+                 "document": ("sendDocument", "document")}
+
+def _bc_plain(t):
+    return _re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', str(t or ""), flags=_re.S)
+
+def _bc_plain_kb(kb):
+    if not kb: return None
+    try:
+        d = kb.to_dict() if hasattr(kb, "to_dict") else dict(kb)
+        for row in d.get("inline_keyboard", []):
+            for b in row:
+                b.pop("style", None); b.pop("icon_custom_emoji_id", None)
+        return d
+    except Exception:
+        return None
+
+def _bc_call(bot_token, method, payload):
+    try:
+        r = _requests.post(f"https://api.telegram.org/bot{bot_token}/{method}", json=payload, timeout=30)
+        return r.json()
+    except Exception as e:
+        return {"ok": False, "description": str(e)}
+
+async def bc_send_one(bot_token, chat_id, text, media_type, media_id, kb=None,
+                      rich_blocks=None, pin=False):
+    """Deliver ONE broadcast to ONE user. Media and message are both always sent:
+    - short text  -> text becomes the media caption (buttons attached)
+    - long text / rich buttons -> media first, then the message (with buttons)
+    Returns True when the main message was delivered."""
+    text = text or ""
+    main_mid = None
+
+    def kbd(k, plain=False):
+        if not k: return None
+        return _bc_plain_kb(k) if plain else (k.to_dict() if hasattr(k, "to_dict") else k)
+
+    async def post(method, payload):
+        d = await asyncio.to_thread(_bc_call, bot_token, method, payload)
+        if not d.get("ok"):
+            # retry once without premium emoji tags / new-style button keys
+            p2 = dict(payload)
+            for k in ("caption", "text"):
+                if k in p2: p2[k] = _bc_plain(p2[k])
+            if "reply_markup" in p2: p2["reply_markup"] = _bc_plain_kb(p2["reply_markup"]) if p2["reply_markup"] else None
+            if p2.get("reply_markup") is None: p2.pop("reply_markup", None)
+            d = await asyncio.to_thread(_bc_call, bot_token, method, p2)
+        return d
+
+    has_media = bool(media_type in _MEDIA_METHOD and media_id)
+    use_caption = has_media and rich_blocks is None and 0 < len(_bc_plain(text)) <= 1000
+
+    if has_media:
+        meth, field = _MEDIA_METHOD[media_type]
+        payload = {"chat_id": chat_id, field: media_id}
+        if use_caption:
+            payload.update({"caption": text, "parse_mode": "HTML"})
+            if kb: payload["reply_markup"] = kbd(kb)
+        d = await post(meth, payload)
+        if not d.get("ok"): return False
+        if use_caption:
+            main_mid = d["result"].get("message_id")
+    if not use_caption and (text.strip() or rich_blocks):
+        d = None
+        if rich_blocks:
+            res = await _send_rich_broadcast_msg(bot_token, chat_id, rich_blocks, None)
+            if res: main_mid = res.get("message_id"); d = {"ok": True}
+        if d is None:
+            payload = {"chat_id": chat_id, "text": text or "\u200b", "parse_mode": "HTML",
+                       "disable_web_page_preview": True}
+            if kb: payload["reply_markup"] = kbd(kb)
+            d = await post("sendMessage", payload)
+            if d.get("ok"): main_mid = d["result"].get("message_id")
+        if not d.get("ok"): return has_media
+    elif not has_media:
+        return False
+    if pin and main_mid:
+        await asyncio.to_thread(_bc_call, bot_token, "pinChatMessage",
+                                {"chat_id": chat_id, "message_id": main_mid, "disable_notification": True})
+    return True
+
 # ============================================================
 # GLOBAL BROADCAST
 # ============================================================
@@ -66,76 +154,9 @@ async def do_global_broadcast_full(admin_uid, context, state):
         f"{emo('🌍')} GLOBAL BROADCAST → {total} users...", parse_mode="HTML")
     for i, (bot_token, bot_uname, u_id) in enumerate(all_users, 1):
         try:
-            if has_rich:
-                photo_id = media_id if (media_type == 'photo' and media_id) else None
-                result = await _send_rich_broadcast_msg(bot_token, u_id, rich_blocks, photo_id)
-                if result:
-                    sent += 1
-                    mid = result.get("message_id")
-                    if should_pin and mid:
-                        try:
-                            async with aiohttp.ClientSession() as s:
-                                await s.post(f"https://api.telegram.org/bot{bot_token}/pinChatMessage",
-                                    json={"chat_id": u_id, "message_id": mid,
-                                          "disable_notification": True},
-                                    timeout=aiohttp.ClientTimeout(total=10))
-                        except: pass
-                else:
-                    try:
-                        base = f"https://api.telegram.org/bot{bot_token}"
-                        async with aiohttp.ClientSession() as s:
-                            if media_type == 'photo' and media_id:
-                                await s.post(f"{base}/sendPhoto",
-                                    json={"chat_id": u_id, "photo": media_id,
-                                          "caption": text, "parse_mode": "HTML",
-                                          "reply_markup": kb.to_dict() if kb else None},
-                                    timeout=aiohttp.ClientTimeout(total=15))
-                            elif media_type == 'video' and media_id:
-                                await s.post(f"{base}/sendVideo",
-                                    json={"chat_id": u_id, "video": media_id,
-                                          "caption": text, "parse_mode": "HTML",
-                                          "reply_markup": kb.to_dict() if kb else None},
-                                    timeout=aiohttp.ClientTimeout(total=15))
-                            else:
-                                await s.post(f"{base}/sendMessage",
-                                    json={"chat_id": u_id, "text": text,
-                                          "parse_mode": "HTML",
-                                          "reply_markup": kb.to_dict() if kb else None,
-                                          "disable_web_page_preview": True},
-                                    timeout=aiohttp.ClientTimeout(total=15))
-                        sent += 1
-                    except: failed += 1
-            else:
-                base = f"https://api.telegram.org/bot{bot_token}"
-                payload = {"chat_id": u_id, "parse_mode": "HTML", "disable_web_page_preview": True}
-                if kb: payload["reply_markup"] = kb.to_dict()
-                endpoint = "sendMessage"
-                if media_type == 'photo' and media_id:
-                    endpoint = "sendPhoto"; payload["photo"] = media_id; payload["caption"] = text
-                    payload.pop("disable_web_page_preview", None)
-                elif media_type == 'video' and media_id:
-                    endpoint = "sendVideo"; payload["video"] = media_id; payload["caption"] = text
-                    payload.pop("disable_web_page_preview", None)
-                else:
-                    payload["text"] = text
-                mid = None
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        async with s.post(f"{base}/{endpoint}", json=payload,
-                                            timeout=aiohttp.ClientTimeout(total=15)) as r:
-                            d = await r.json()
-                            if d.get("ok"):
-                                mid = d.get("result", {}).get("message_id")
-                                sent += 1
-                            else: failed += 1
-                except: failed += 1
-                if should_pin and mid:
-                    try:
-                        async with aiohttp.ClientSession() as s:
-                            await s.post(f"{base}/pinChatMessage",
-                                json={"chat_id": u_id, "message_id": mid, "disable_notification": True},
-                                timeout=aiohttp.ClientTimeout(total=10))
-                    except: pass
+            ok = await bc_send_one(bot_token, u_id, text, media_type, media_id, kb, rich_blocks, should_pin)
+            if ok: sent += 1
+            else: failed += 1
         except: failed += 1
         if i % 30 == 0:
             try:
@@ -175,6 +196,7 @@ def bcast_media_menu_kb():
     return InlineKeyboardMarkup([
         [ibtn("ADD VIDEO","bc_add_video",emoji="🎬",style="primary"),
          ibtn("ADD IMAGE","bc_add_image",emoji="🎥",style="primary")],
+        [ibtn("ADD FILE","bc_add_file",emoji="📎",style="success")],
         [ibtn("NO MEDIA","bc_no_media",emoji="❌",style="danger"),
          ibtn("CANCEL","cancel",emoji="🚫",style="danger")]])
 
@@ -236,45 +258,9 @@ async def do_broadcast(context, admin_uid, state):
                                                  parse_mode="HTML")
     for i, (u_id,) in enumerate(users, 1):
         try:
-            if has_rich:
-                pid = media_id if (media_type == 'photo' and media_id) else None
-                result = await _send_rich_broadcast_msg(bot_token, int(u_id), rich_blocks, pid)
-                if result:
-                    sent += 1
-                    mid = result.get("message_id")
-                    if should_pin and mid:
-                        try: await context.bot.pin_chat_message(chat_id=int(u_id),
-                            message_id=mid, disable_notification=True)
-                        except: pass
-                else:
-                    try:
-                        if media_type == 'photo' and media_id:
-                            await context.bot.send_photo(chat_id=int(u_id), photo=media_id,
-                                caption=text, parse_mode="HTML", reply_markup=kb)
-                        elif media_type == 'video' and media_id:
-                            await context.bot.send_video(chat_id=int(u_id), video=media_id,
-                                caption=text, parse_mode="HTML", reply_markup=kb)
-                        else:
-                            await context.bot.send_message(chat_id=int(u_id), text=text,
-                                parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-                        sent += 1
-                    except: failed += 1
-            else:
-                msg = None
-                if media_type == 'photo' and media_id:
-                    msg = await context.bot.send_photo(chat_id=int(u_id), photo=media_id,
-                        caption=text, parse_mode="HTML", reply_markup=kb)
-                elif media_type == 'video' and media_id:
-                    msg = await context.bot.send_video(chat_id=int(u_id), video=media_id,
-                        caption=text, parse_mode="HTML", reply_markup=kb)
-                else:
-                    msg = await context.bot.send_message(chat_id=int(u_id), text=text,
-                        parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-                if should_pin and msg:
-                    try: await context.bot.pin_chat_message(chat_id=int(u_id),
-                        message_id=msg.message_id, disable_notification=True)
-                    except: pass
-                sent += 1
+            ok = await bc_send_one(bot_token, int(u_id), text, media_type, media_id, kb, rich_blocks, should_pin)
+            if ok: sent += 1
+            else: failed += 1
         except: failed += 1
         if i % 20 == 0:
             try:

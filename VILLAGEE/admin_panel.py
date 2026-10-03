@@ -37,20 +37,32 @@ def _ist_month_bounds_utc():
     return (s.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             nm.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
 
-def _fetch_tx_rows(su, eu):
+def _ist_last_month_bounds_utc():
+    now = now_ist()
+    cs = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    ls = (cs - timedelta(days=1)).replace(day=1)
+    return (ls.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            cs.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+
+def _fetch_tx_rows(su, eu, provider=None):
     rows = []
     try:
-        for r in cur.execute("""SELECT order_id, user_id, amount, status, utr, txn_id,
-            verified_via, paid_amount, date FROM upi_orders
-            WHERE date >= ? AND date < ? ORDER BY date DESC""", (su, eu)).fetchall():
+        q_sql = """SELECT order_id, user_id, amount, status, utr, txn_id,
+            verified_via, paid_amount, date, provider FROM upi_orders
+            WHERE date >= ? AND date < ?"""
+        args = [su, eu]
+        if provider:
+            q_sql += " AND LOWER(COALESCE(provider,'fampay')) = ?"; args.append(provider.lower())
+        q_sql += " ORDER BY date DESC"
+        for r in cur.execute(q_sql, tuple(args)).fetchall():
             rows.append({"source":"UPI","order_id":r["order_id"],"user_id":r["user_id"],
                          "amount":r["amount"],"paid_amount":r["paid_amount"],"utr":r["utr"],
-                         "txn_id":r["txn_id"],"method":(r["verified_via"] or "fampay"),
+                         "txn_id":r["txn_id"],"method":(r["verified_via"] or r["provider"] or "fampay"),
                          "status":r["status"],"date":r["date"]})
     except: pass
     try:
-        for r in cur.execute("""SELECT id, user_id, amount, method_name, status, date FROM deposits
-            WHERE date >= ? AND date < ? ORDER BY date DESC""", (su, eu)).fetchall():
+        for r in ([] if provider else cur.execute("""SELECT id, user_id, amount, method_name, status, date FROM deposits
+            WHERE date >= ? AND date < ? ORDER BY date DESC""", (su, eu)).fetchall()):
             rows.append({"source":"DEPOSIT","order_id":f"DEP-{r['id']}","user_id":r["user_id"],
                          "amount":r["amount"],"paid_amount":r["amount"],"utr":None,"txn_id":None,
                          "method":r["method_name"] or "manual","status":r["status"],"date":r["date"]})
@@ -68,9 +80,24 @@ async def view_admin_tx_month(update, page=1):
     s, e = _ist_month_bounds_utc()
     await _render_tx_page(update, update.effective_user.id, page, s, e, "📆 MONTH TRANSACTIONS", "month")
 
-async def _render_tx_page(update, uid, page, s, e, title, kind):
+async def view_admin_tx_last(update, page=1):
+    if not is_admin(update.effective_user.id): return
+    s, e = _ist_last_month_bounds_utc()
+    await _render_tx_page(update, update.effective_user.id, page, s, e, "🗓️ LAST MONTH TRANSACTIONS", "last")
+
+async def view_admin_paytm_tx(update, kind="today", page=1):
+    if not is_admin(update.effective_user.id): return
+    if kind == "month":
+        s, e = _ist_month_bounds_utc(); title = "💳 PAYTM — THIS MONTH"
+    elif kind == "last":
+        s, e = _ist_last_month_bounds_utc(); title = "💳 PAYTM — LAST MONTH"
+    else:
+        kind = "today"; s, e = _ist_day_bounds_utc(); title = "💳 PAYTM — TODAY"
+    await _render_tx_page(update, update.effective_user.id, page, s, e, title, kind, provider="paytm")
+
+async def _render_tx_page(update, uid, page, s, e, title, kind, provider=None):
     limit = 10
-    rows = _fetch_tx_rows(s, e)
+    rows = _fetch_tx_rows(s, e, provider)
     total = len(rows); tot = 0; ok = 0
     for r in rows:
         try: amt = float(r.get("paid_amount") or r.get("amount") or 0)
@@ -97,11 +124,19 @@ async def _render_tx_page(update, uid, page, s, e, title, kind):
                           ["✅ OK", str(ok)],["💰 Amount", f"₹{tot:.0f}"],["🕒 TZ", "IST (UTC+5:30)"]]),
               make_table(tb)]
     nav = []
-    if page > 1: nav.append(ibtn("Prev", f"tx_page|{kind}|{page-1}", emoji="🔙", style="primary"))
-    if page < tp: nav.append(ibtn("Next", f"tx_page|{kind}|{page+1}", emoji="👉", style="primary"))
+    pfx = "ptx_page" if provider == "paytm" else "tx_page"
+    if page > 1: nav.append(ibtn("Prev", f"{pfx}|{kind}|{page-1}", emoji="🔙", style="primary"))
+    if page < tp: nav.append(ibtn("Next", f"{pfx}|{kind}|{page+1}", emoji="👉", style="primary"))
     btns = []
     if nav: btns.append(nav)
-    btns.append([ibtn("BACK", "adm_gmail_menu", emoji="🔙", style="primary")])
+    if provider == "paytm":
+        btns.append([ibtn("TODAY", "adm_ptx_today", emoji="📅", style="success"),
+                     ibtn("THIS MONTH", "adm_ptx_month", emoji="📆", style="success"),
+                     ibtn("LAST MONTH", "adm_ptx_last", emoji="🗓️", style="success")])
+        btns.append([ibtn("BACK", "adm_payment_methods_back", emoji="🔙", style="primary")])
+    else:
+        btns.append([ibtn("LAST MONTH", "adm_tx_last", emoji="🗓️", style="success")])
+        btns.append([ibtn("BACK", "adm_gmail_menu", emoji="🔙", style="primary")])
     fb = f"{title} | Page {page}/{tp} | Total {total} | ₹{tot:.0f}"
     await send_rich_async(uid, blocks, reply_markup=InlineKeyboardMarkup(btns).to_dict(),
                           fallback_text=fb, edit_query=_edit_query_of(update))
@@ -140,6 +175,9 @@ async def view_admin_payment_methods(update):
          ibtn("SET PAYTM MID", "adm_paytm_set_mid", emoji="🆔", style="primary")],
         [ibtn("SET MANUAL UPI", "adm_manual_upi_set", emoji="📄", style="primary")],
         [ibtn("FAMPAY DETAILS", "adm_gmail_menu", emoji="⚙️", style="primary")],
+        [ibtn("PAYTM TODAY TX", "adm_ptx_today", emoji="📅", style="success"),
+         ibtn("PAYTM MONTH TX", "adm_ptx_month", emoji="📆", style="success")],
+        [ibtn("PAYTM LAST MONTH", "adm_ptx_last", emoji="🗓️", style="success")],
         [ibtn("BACK", "admin_panel", emoji="🔙", style="primary")],
     ]
     markup = InlineKeyboardMarkup(rows)
@@ -191,7 +229,7 @@ async def view_admin_panel(update):
                 ["📢 User Log", (str(ulc) if ulc else "❌")[:30]],["📧 FamPay", gmail[:30]],
                 ["🏦 UPI Auto", fampay_upi[:30]],["📄 UPI Manual", manual_upi[:30]],
                 ["🔑 Pwd", gmail_pw],["🌐 Auto", gmail_on],
-                ["🔲 QR", qr_local],["🔑 LZT", lzt_t],
+                ["🔲 QR", qr_local],["🔑 Server 1 Token", lzt_t],
                 ["🔍 OSINT", f"{osint_cfg} / docs:{osint_docs}"],
                 ["📢 ForceJoin", str(force_ch)],
                 ["📉 Min ₹", str(min_d)],
@@ -216,7 +254,7 @@ async def view_admin_panel(update):
              ibtn("📢 USER LOGS","adm_userlog_menu",emoji="📢",style="primary")],
             [ibtn("💳 PAYMENT METHODS","admin_payment_methods",emoji="💳",style="success")],
             [ibtn("📧 FAMPAY AUTO","admin_payment_methods",emoji="📧",style="primary")],
-            [ibtn("🖥️ SERVER 1 (LZT)","adm_lzt_settings",emoji="🖥️",style="primary")],
+            [ibtn("🖥️ SERVER 1","adm_lzt_settings",emoji="🖥️",style="primary")],
             [ibtn("🔧 MAINTENANCE","adm_maintenance",emoji="🔧",style="danger"),
              ibtn("💾 BACKUP","adm_backup",emoji="💾",style="success")],
             [ibtn("📥 RESTORE","adm_restore",emoji="📥",style="danger")],
@@ -285,7 +323,11 @@ async def view_admin_gmail_menu(update):
     except: te = mt = mm = dp = 0; ls = "N/A"
     rows = [
         [ibtn("📅 TODAY TX","adm_tx_today",emoji="📅",style="success")],
-        [ibtn("📆 MONTH TX","adm_tx_month",emoji="📆",style="success")],
+        [ibtn("📆 MONTH TX","adm_tx_month",emoji="📆",style="success"),
+         ibtn("🗓️ LAST MONTH TX","adm_tx_last",emoji="🗓️",style="success")],
+        [ibtn("💳 PAYTM TODAY","adm_ptx_today",emoji="📅",style="success"),
+         ibtn("💳 PAYTM MONTH","adm_ptx_month",emoji="📆",style="success")],
+        [ibtn("💳 PAYTM LAST MONTH","adm_ptx_last",emoji="🗓️",style="success")],
         [ibtn("SET EMAIL","adm_gmail_set_email",emoji="📧",style="primary")],
         [ibtn("SET FAMPAY UPI","adm_gmail_set_upi",emoji="🏦",style="primary"),
          ibtn("SET MANUAL UPI","adm_manual_upi_set",emoji="📄",style="success")],
@@ -433,6 +475,8 @@ async def view_admin_settings(update):
          ibtn("SUPPORT","adm_edit_support",emoji="🔗",style="primary")],
         [ibtn("UPDATE URL","adm_edit_updateurl",emoji="🔗",style="primary")],
         [ibtn("MAINT IMG","adm_edit_maintimg",emoji="🖼️",style="primary")],
+        [ibtn("MINI APP LOGO","adm_edit_logo",emoji="🖼️",style="success"),
+         ibtn("MINI APP NAME","adm_edit_storename",emoji="🏷️",style="success")],
         [ibtn("DAYBREAK","adm_edit_default_daybreak",emoji="🗓️",style="primary")],
         [ibtn("BACK","admin_panel",emoji="🔙",style="primary")]]
     await send_rich_async(uid, [make_heading("⚙️ SETTINGS", 2),
@@ -442,7 +486,9 @@ async def view_admin_settings(update):
                     ["🏦 UPI Auto", s.get('fampay_upi_id', DEFAULT_UPI_PAY_ID)],
                     ["📄 UPI Manual", s.get('manual_upi_id', DEFAULT_MANUAL_UPI_ID)],
                     ["📞 C1", s.get('contact_1', DEFAULT_CONTACT_1)],
-                    ["🗓️ Daybreak", f"≥{s.get('lzt_default_daybreak', str(DEFAULT_DAYBREAK))}d"],
+                    ["🗓️ Daybreak", daybreak_label(s.get('lzt_default_daybreak', str(DEFAULT_DAYBREAK)))],
+                    ["🏷️ Mini App Name", s.get('store_name') or s.get('bot_display_name') or '—'],
+                    ["🖼️ Mini App Logo", 'CUSTOM' if s.get('store_logo') else 'DEFAULT'],
                     ["📢 C2", s.get('contact_2', DEFAULT_CONTACT_2)]])],
         reply_markup=InlineKeyboardMarkup(rows).to_dict(),
         fallback_text="⚙️ SETTINGS", edit_query=_edit_query_of(update))
@@ -544,10 +590,10 @@ async def view_admin_lzt_settings(update):
               style="success" if is_server1_online() else "danger")],
         [ibtn("CLEAR CACHE","adm_lzt_clear_cache",emoji="🗑️",style="danger")],
         [ibtn("BACK","admin_panel",emoji="🔙",style="primary")]]
-    await send_rich_async(uid, [make_heading("🖥️ SERVER 1 (LZT)", 2),
+    await send_rich_async(uid, [make_heading("🖥️ SERVER 1", 2),
         make_table([["⚙️ KEY","📋 VALUE"],["🔑 Token", ts],["🟢 Server 1", s1],
                     ["💰 Balance", str(lb)],["💹 Markup", f"{gm}%"],
-                    ["🗓️ Daybreak", f"≥{db}d"],["⏱️ Age", f"{ELIGIBILITY_MIN_AGE_SECONDS}s"]])],
+                    ["🗓️ Daybreak", daybreak_label(db)]])],
         reply_markup=InlineKeyboardMarkup(rows).to_dict(),
         fallback_text="🖥️ S1 SETTINGS", edit_query=_edit_query_of(update))
 
@@ -595,7 +641,7 @@ async def process_admin_balance(update, context, action, text):
 from buttons import ibtn, main_reply_kb
 from config import (
     DEFAULT_CONTACT_1, DEFAULT_CONTACT_2, DEFAULT_DAYBREAK, DEFAULT_MANUAL_UPI_ID,
-    DEFAULT_UPI_PAY_ID, ELIGIBILITY_MIN_AGE_SECONDS, IST, log, now_ist
+    DEFAULT_UPI_PAY_ID, ELIGIBILITY_MIN_AGE_SECONDS, IST, daybreak_label, log, now_ist
 )
 from context import cur, db
 from database import (

@@ -9,13 +9,20 @@ import re, time, string, secrets
 from html import escape
 from urllib.parse import quote
 
+import base64
+from io import BytesIO
+
 try:
     import qrcode
-    from qrcode.constants import ERROR_CORRECT_M
-    from io import BytesIO
     QR_AVAILABLE = True
 except Exception:
+    qrcode = None
     QR_AVAILABLE = False
+
+try:
+    from qrcode.constants import ERROR_CORRECT_M
+except Exception:
+    ERROR_CORRECT_M = 0
 
 
 def html_safe_error(e): return escape(str(e) if e else "Unknown error")
@@ -109,18 +116,36 @@ def generate_unique_order_id(uid):
     return f"{ORDER_PREFIX}{us}{int(time.time()*1000)}{secrets.token_hex(2)}"
 
 def create_upi_url(upi, amount, order_id, name):
-    return ("upi://pay?"f"pa={quote(upi, safe='')}"f"&pn={quote(name, safe='')}"
-            f"&am={quote(str(amount), safe='')}"f"&tr={quote(order_id, safe='')}"
-            f"&tn={quote(f'Payment for ORDER{order_id}', safe='')}")
+    return ("upi://pay?"f"pa={quote(str(upi), safe='')}"f"&pn={quote(str(name), safe='')}"
+            f"&am={quote(str(amount), safe='')}"f"&tr={quote(str(order_id), safe='')}"
+            f"&tn={quote(f'Payment for ORDER{order_id}', safe='')}"f"&cu=INR")
+
+def make_qr_png_bytes(data):
+    """Render ANY text (UPI link) as a PNG QR. Works with Pillow or pure-PyPNG backend."""
+    if not QR_AVAILABLE:
+        raise RuntimeError("qrcode not installed (pip install qrcode[pil])")
+    qr = qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_M, box_size=10, border=4)
+    qr.add_data(data); qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    try:
+        img.save(buf, format="PNG")
+    except TypeError:
+        buf = BytesIO(); img.save(buf)
+    out = buf.getvalue()
+    if not out:
+        raise RuntimeError("QR render produced empty image")
+    return out
 
 def generate_qr_png_bytes(upi, amount, order_id, name):
-    if not QR_AVAILABLE: raise RuntimeError("qrcode not installed")
-    upi_url = create_upi_url(upi, amount, order_id, name)
-    qr = qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_M, box_size=10, border=4)
-    qr.add_data(upi_url); qr.make(fit=True)
-    img = qr.make_image()
-    buf = BytesIO(); img.save(buf, format="PNG")
-    return buf.getvalue()
+    return make_qr_png_bytes(create_upi_url(upi, amount, order_id, name))
+
+def qr_data_uri(data):
+    """data:image/png;base64,... for the Mini App (no external QR service needed)."""
+    try:
+        return "data:image/png;base64," + base64.b64encode(make_qr_png_bytes(data)).decode()
+    except Exception:
+        return ""
 
 
 # ============================================================

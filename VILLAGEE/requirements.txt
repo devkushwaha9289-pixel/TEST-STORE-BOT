@@ -1,9 +1,11 @@
-python-telegram-bot
-telethon
+Pillow
 aiohttp
-requests
-qrcode[pil]
 fastapi
-uvicorn[standard]
 pydantic
+pypng
 python-multipart
+python-telegram-bot
+qrcode[pil]
+requests
+telethon
+uvicorn[standard]

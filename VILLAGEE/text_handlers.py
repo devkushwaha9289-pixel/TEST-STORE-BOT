@@ -127,9 +127,11 @@ async def on_photo(update, context):
         if uid in temp_data:
             act = temp_data[uid].get('admin_action', '')
             if act in ('bc_wait_msg', 'bc_wait_image'):
-                try: temp_data[uid]['bcast_text'] = msg.caption_html or msg.caption or ""
-                except: temp_data[uid]['bcast_text'] = msg.caption or ""
-                temp_data[uid]['bcast_text'] = auto_premium(temp_data[uid]['bcast_text'])
+                try: _cap = msg.caption_html or msg.caption or ""
+                except: _cap = msg.caption or ""
+                # Keep the message text that was already saved; only use the caption if given.
+                if _cap.strip() or act == 'bc_wait_msg':
+                    temp_data[uid]['bcast_text'] = auto_premium(_cap)
                 temp_data[uid]['bcast_media_type'] = 'photo'
                 temp_data[uid]['bcast_media_id'] = msg.photo[-1].file_id
                 temp_data[uid]['admin_action'] = 'bc_btn_menu'
@@ -150,9 +152,11 @@ async def on_video(update, context):
         if uid in temp_data:
             act = temp_data[uid].get('admin_action', '')
             if act in ('bc_wait_msg', 'bc_wait_video'):
-                try: temp_data[uid]['bcast_text'] = msg.caption_html or msg.caption or ""
-                except: temp_data[uid]['bcast_text'] = msg.caption or ""
-                temp_data[uid]['bcast_text'] = auto_premium(temp_data[uid]['bcast_text'])
+                try: _cap = msg.caption_html or msg.caption or ""
+                except: _cap = msg.caption or ""
+                # Keep the message text that was already saved; only use the caption if given.
+                if _cap.strip() or act == 'bc_wait_msg':
+                    temp_data[uid]['bcast_text'] = auto_premium(_cap)
                 temp_data[uid]['bcast_media_type'] = 'video'
                 temp_data[uid]['bcast_media_id'] = msg.video.file_id
                 temp_data[uid]['admin_action'] = 'bc_btn_menu'

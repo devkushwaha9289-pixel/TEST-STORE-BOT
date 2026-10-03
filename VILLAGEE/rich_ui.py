@@ -91,6 +91,61 @@ async def _tg_send_photo_buffer(chat_id, png_bytes, caption, reply_markup=None, 
         data=data, files=files, timeout=timeout)
 
 
+def _plain_caption(html_text):
+    """Remove <tg-emoji> wrappers (keeps the fallback emoji) so captions never fail on bots
+    that cannot use premium emoji."""
+    import re as _re
+    return _re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', str(html_text or ""), flags=_re.S)
+
+def _plain_markup(markup):
+    """Strip Bot-API 9.x only keys (style / icon_custom_emoji_id) from an inline keyboard dict."""
+    try:
+        rows = []
+        for row in (markup or {}).get("inline_keyboard", []):
+            nr = []
+            for b in row:
+                b = dict(b); b.pop("style", None); b.pop("icon_custom_emoji_id", None); nr.append(b)
+            rows.append(nr)
+        return {"inline_keyboard": rows}
+    except Exception:
+        return markup
+
+async def send_qr_photo(chat_id, png_bytes, caption, reply_markup=None):
+    """Send a QR photo with 3 progressive fallbacks and real logging.
+    Returns message_id of the message that carries the buttons, or None."""
+    attempts = [
+        (caption, reply_markup),
+        (_plain_caption(caption), _plain_markup(reply_markup)),
+    ]
+    for cap, kb in attempts:
+        try:
+            r = await _tg_send_photo_buffer(chat_id, png_bytes, cap[:1024], reply_markup=kb)
+            d = r.json()
+            if d.get("ok"):
+                return d.get("result", {}).get("message_id")
+            log.warning(f"QR sendPhoto rejected: {d.get('description')}")
+        except Exception as e:
+            log.warning(f"QR sendPhoto error: {e}")
+    # last resort: QR photo alone, then details + buttons as a normal message
+    try:
+        r = await _tg_send_photo_buffer(chat_id, png_bytes, "UPI QR", reply_markup=None)
+        d = r.json()
+        if d.get("ok"):
+            try:
+                r2 = await _tg_post("sendMessage", {"chat_id": chat_id, "text": _plain_caption(caption),
+                                                    "parse_mode": "HTML",
+                                                    "reply_markup": _plain_markup(reply_markup)}, timeout=30)
+                d2 = r2.json()
+                if d2.get("ok"):
+                    return d2.get("result", {}).get("message_id")
+            except Exception as e:
+                log.warning(f"QR details msg error: {e}")
+            return d.get("result", {}).get("message_id")
+    except Exception as e:
+        log.warning(f"QR last resort error: {e}")
+    return None
+
+
 # ============================================================
 # PER-ITEM PURCHASE BUTTON (deep-links)
 # ============================================================
