@@ -157,10 +157,11 @@ async def view_recharge(update):
     blocks = [make_heading(STORE_HEADER, 2), make_heading("⚡ RECHARGE CENTER", 3),
         make_table([["ℹ️ INFO","📋 DETAIL"],["💰 Balance", f"₹{bal:.1f}"],
             ["📉 Min Deposit", f"₹{min_d}"],["💱 USDT", f"1 USDT ≈ ₹{rate}"],
-            ["⚡ UPI Auto", "FamPay Auto-Verify"],["📄 UPI Manual", "Manual UTR + Screenshot"],
+            ["⚡ FamPay Auto", "FamPay Auto-Verify"],["⚡ Paytm Auto", "Paytm Status API"],["📄 UPI Manual", "Manual UTR + Screenshot"],
             ["💎 Binance", "INR → USDT"],["🔷 Crypto", "BEP20 / TRON"]])]
     kb = InlineKeyboardMarkup([
-        [ibtn("UPI AUTOMATIC","dep_upi",emoji="⚡",style="success")],
+        [ibtn("FAMPAY AUTOMATIC","dep_upi",emoji="⚡",style="success")],
+        [ibtn("PAYTM AUTOMATIC","dep_paytm",emoji="💳",style="success")],
         [ibtn("UPI MANUAL","dep_manual_upi",emoji="📄",style="success")],
         [ibtn("BINANCE","depm_Binance",emoji="💎",style="primary")],
         [ibtn("CRYPTO","depm_Tron",emoji="💎",style="primary")],
