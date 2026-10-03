@@ -10,11 +10,36 @@ JSON: {"MID": "...", "ORDERID": "..."}
 
 import asyncio
 import time
+import sqlite3
 from decimal import Decimal, InvalidOperation
 from html import escape
+from io import BytesIO
+from urllib.parse import quote
+import qrcode
 
 import requests
 from telegram import InlineKeyboardMarkup
+
+
+def _build_paytm_upi_url(upi: str, order_id: str, amount, note: str = "Payment") -> str:
+    return (
+        f"upi://pay?pa={quote(str(upi), safe='')}"
+        f"&pn={quote(PAYTM_MERCHANT_NAME, safe='')}"
+        f"&am={quote(str(amount), safe='')}"
+        f"&tr={quote(str(order_id), safe='')}"
+        f"&tn={quote(str(note), safe='')}"
+    )
+
+
+def _make_paytm_qr_png(upi: str, order_id: str, amount) -> bytes:
+    url = _build_paytm_upi_url(upi, order_id, amount, f"Payment {order_id}")
+    qr = qrcode.QRCode(version=None, box_size=10, border=4)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image()
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 async def check_paytm_status(mid: str, order_id: str) -> dict:
@@ -182,27 +207,34 @@ async def show_paytm_qr(chat_id, uid, amount):
         )
         return
 
-    oid = generate_unique_order_id(uid)
+    # One live Paytm order per user+amount. Repeated taps reuse it.
+    existing = get_active_upi_order(uid, "paytm", amount)
+    oid = existing["order_id"] if existing else generate_unique_order_id(uid)
     qr_bytes = None
     try:
         if QR_AVAILABLE:
-            qr_bytes = await asyncio.to_thread(
-                generate_qr_png_bytes,
-                upi_id,
-                str(amount),
-                oid,
-                PAYTM_MERCHANT_NAME,
-            )
+            qr_bytes = await asyncio.to_thread(_make_paytm_qr_png, upi_id, oid, amount)
     except Exception as e:
         log.warning("Paytm QR: %s", e)
 
-    cur.execute(
-        """INSERT OR REPLACE INTO upi_orders
-           (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
-           VALUES (?,?,?,?,?,?,?)""",
-        (oid, uid, amount, "pending", 0, time.time(), "paytm"),
-    )
-    db.commit()
+    if not existing:
+        try:
+            cur.execute(
+                """INSERT INTO upi_orders
+                   (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (oid, uid, amount, "pending", 0, time.time(), "paytm"),
+            )
+            db.commit()
+        except sqlite3.IntegrityError:
+            db.rollback()
+            existing = get_active_upi_order(uid, "paytm", amount)
+            if not existing:
+                raise
+            oid = existing["order_id"]
+    else:
+        cur.execute("UPDATE upi_orders SET qr_msg_id=0 WHERE order_id=?", (oid,))
+        db.commit()
 
     usdt_amt = round(amount / get_rate(), 2)
     msg = (
@@ -340,8 +372,8 @@ from config import (
 )
 from context import cur, db
 from database import (
-    get_paytm_mid, get_paytm_upi_id, get_rate,
-    is_txn_used_by_other_order,
+    get_active_upi_order, get_paytm_mid, get_paytm_upi_id, get_rate,
+    is_utr_used_by_other_order,
 )
 from emojis import emo
 from payments import complete_upi_order
