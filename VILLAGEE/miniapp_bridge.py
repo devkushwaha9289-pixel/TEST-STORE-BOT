@@ -138,25 +138,9 @@ async def mini_deposit_paytm(uid, amount):
         raise RuntimeError("Paytm is not configured by admin")
     amount = _check_amount(amount)
 
-    existing = get_active_upi_order(uid, "paytm", amount)
-    fresh = not existing
-    if existing:
-        oid = existing["order_id"]
-    else:
-        oid = generate_unique_order_id(uid)
-        try:
-            cur.execute(
-                """INSERT INTO upi_orders
-                   (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (oid, uid, amount, "pending", 0, time.time(), "paytm"))
-            db.commit()
-        except sqlite3.IntegrityError:
-            db.rollback()
-            existing = get_active_upi_order(uid, "paytm", amount)
-            if not existing:
-                raise
-            oid, fresh = existing["order_id"], False
+    from database import reserve_upi_order
+    oid, reused = reserve_upi_order(uid, "paytm", amount)
+    fresh = not reused
     if fresh:
         # same auto-verify watchdog as the Telegram flow -> credits even if
         # the user closes the Mini App.
@@ -200,24 +184,8 @@ async def mini_deposit_fampay(uid, amount):
         raise RuntimeError("Auto UPI not configured")
     amount = _check_amount(amount)
 
-    existing = get_active_upi_order(uid, "fampay", amount)
-    if existing and existing["status"] == "pending":
-        oid = existing["order_id"]
-    else:
-        oid = generate_unique_order_id(uid)
-        try:
-            cur.execute(
-                """INSERT INTO upi_orders
-                   (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (oid, uid, amount, "pending", 0, time.time(), "fampay"))
-            db.commit()
-        except sqlite3.IntegrityError:
-            db.rollback()
-            ex = get_active_upi_order(uid, "fampay", amount)
-            if not ex:
-                raise
-            oid = ex["order_id"]
+    from database import reserve_upi_order
+    oid, _reused = reserve_upi_order(uid, "fampay", amount)
     return {
         "ok": True, "provider": "fampay", "order_id": oid, "upi_id": upi,
         "amount": amount, "poll": True,

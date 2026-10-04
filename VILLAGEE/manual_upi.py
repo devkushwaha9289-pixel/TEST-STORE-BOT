@@ -24,10 +24,13 @@ async def show_manual_upi_qr(chat_id, uid, amount):
         log.error(f"Manual QR generate failed: {e}")
 
     # Save to DB with status manual_pending
+    cur.execute("""UPDATE upi_orders SET status='expired'
+        WHERE user_id=? AND LOWER(COALESCE(provider,'fampay'))='manual' AND amount=?
+          AND status IN ('pending','manual_pending')""", (uid, amount))
     cur.execute("""INSERT OR REPLACE INTO upi_orders
-        (order_id, user_id, amount, status, qr_msg_id, created_ts, verified_via)
-        VALUES (?,?,?,?,?,?,?)""",
-        (oid, uid, amount, "manual_pending", 0, time.time(), "manual_upi"))
+        (order_id, user_id, amount, status, qr_msg_id, created_ts, verified_via, provider)
+        VALUES (?,?,?,?,?,?,?,?)""",
+        (oid, uid, amount, "manual_pending", 0, time.time(), "manual_upi", "manual"))
     db.commit()
     try:
         cur.execute("""INSERT OR REPLACE INTO manual_upi_orders

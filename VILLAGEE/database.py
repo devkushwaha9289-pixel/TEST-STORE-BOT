@@ -5,7 +5,7 @@ VILLAGEE SMS SHOP v28.1 — database.py
 SQLite schema/migrations plus settings, user, admin and ban helpers.
 """
 
-import os, time
+import os, time, sqlite3
 
 # ============================================================
 # DB HELPERS + SCHEMA
@@ -136,6 +136,14 @@ def _init_schema():
     _ensure_col("file_products", "added_date", "TIMESTAMP")
     _ensure_col("file_products", "item_code", "TEXT")
     _ensure_col("file_products", "api_endpoint", "TEXT")
+
+    # Old pending orders (bot restarted before their timer fired) must not block new ones.
+    try:
+        cur.execute("UPDATE upi_orders SET status='expired' WHERE status='pending' AND created_ts < ?",
+                    (time.time() - 1800,))
+        db.commit()
+    except Exception:
+        pass
 
     # Prevent concurrent/repeated button taps from creating multiple live
     # orders for the same user/provider/amount. Keep the newest pending row.
@@ -380,6 +388,50 @@ def get_support_url():
 
 def get_contact_1(): return get_setting('contact_1', DEFAULT_CONTACT_1)
 def get_contact_2(): return get_setting('contact_2', DEFAULT_CONTACT_2)
+
+def reserve_upi_order(uid, provider, amount, qr_msg_id=0):
+    """Create (or reuse) the single live pending order for user/provider/amount.
+    NEVER raises because of the 'one live order' unique index: stale pending rows
+    are expired automatically and the insert is retried.
+    Returns (order_id, reused)."""
+    from utils import generate_unique_order_id
+    provider = str(provider).lower()
+    existing = get_active_upi_order(uid, provider, amount)
+    if existing:
+        try:
+            cur.execute("UPDATE upi_orders SET qr_msg_id=0 WHERE order_id=?", (existing["order_id"],))
+            db.commit()
+        except Exception:
+            pass
+        return existing["order_id"], True
+    for attempt in range(4):
+        oid = generate_unique_order_id(uid)
+        try:
+            cur.execute("""INSERT INTO upi_orders
+                (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
+                VALUES (?,?,?,?,?,?,?)""",
+                (oid, uid, amount, "pending", qr_msg_id, time.time(), provider))
+            db.commit()
+            return oid, False
+        except sqlite3.IntegrityError:
+            db.rollback()
+            # A stale/old live row blocks the unique index -> expire it and retry.
+            try:
+                cur.execute("""UPDATE upi_orders SET status='expired'
+                    WHERE user_id=? AND LOWER(COALESCE(provider,'fampay'))=? AND amount=?
+                      AND status IN ('pending','manual_pending')""", (uid, provider, amount))
+                db.commit()
+            except Exception:
+                db.rollback()
+    raise RuntimeError("could not create UPI order")
+
+def expire_stale_upi_orders(max_age=1800):
+    try:
+        cur.execute("UPDATE upi_orders SET status='expired' WHERE status IN ('pending','manual_pending') AND created_ts < ?",
+                    (time.time() - max_age,))
+        db.commit()
+    except Exception:
+        pass
 
 def get_active_upi_order(user_id, provider, amount, max_age=1800):
     """Return an existing active order for this user/provider/amount.

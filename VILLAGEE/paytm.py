@@ -200,33 +200,13 @@ async def show_paytm_qr(chat_id, uid, amount):
         )
         return
 
-    # One live Paytm order per user+amount. Repeated taps reuse it.
-    existing = get_active_upi_order(uid, "paytm", amount)
-    oid = existing["order_id"] if existing else generate_unique_order_id(uid)
+    # One live Paytm order per user+amount. Reserve it FIRST (never fails on stale rows).
+    oid, existing = reserve_upi_order(uid, "paytm", amount)
     qr_bytes = None
     try:
         qr_bytes = await asyncio.to_thread(_make_paytm_qr_png, upi_id, oid, amount)
     except Exception as e:
         log.error("Paytm QR generate failed: %s", e)
-
-    if not existing:
-        try:
-            cur.execute(
-                """INSERT INTO upi_orders
-                   (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (oid, uid, amount, "pending", 0, time.time(), "paytm"),
-            )
-            db.commit()
-        except sqlite3.IntegrityError:
-            db.rollback()
-            existing = get_active_upi_order(uid, "paytm", amount)
-            if not existing:
-                raise
-            oid = existing["order_id"]
-    else:
-        cur.execute("UPDATE upi_orders SET qr_msg_id=0 WHERE order_id=?", (oid,))
-        db.commit()
 
     usdt_amt = round(amount / get_rate(), 2)
     msg = (
@@ -365,6 +345,7 @@ from emojis import emo
 from payments import complete_upi_order
 from fampay import _send_double_payment_alert, _send_mismatch_alert
 from rich_ui import _tg_post, _tg_send_photo_buffer, send_qr_photo
+from database import reserve_upi_order
 from utils import (
     QR_AVAILABLE, create_upi_url, generate_qr_png_bytes, make_qr_png_bytes,
     generate_unique_order_id,

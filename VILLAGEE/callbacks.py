@@ -18,6 +18,18 @@ def _late_answer(data):
             or data.startswith(("pkp_", "mkp_", "kp_", "bc_", "adm_", "manup_", "oakp_", "dep_acc|", "dep_rej|")))
 
 
+def _recover_keypad_state(q, uid, step):
+    """If the keypad state was lost (bot restart / cleared), rebuild it from the amount shown in the message."""
+    import re as _re
+    try:
+        m = _re.search(r"₹\s*(\d+)", q.message.text or q.message.caption or "")
+        val = m.group(1) if m else "0"
+    except Exception:
+        val = "0"
+    deposit_input[uid] = {'step': step, 'val': val}
+    return deposit_input[uid]
+
+
 async def on_callback(update, context):
     """Wrapper: guarantees the button spinner is always cleared."""
     q = update.callback_query
@@ -405,7 +417,7 @@ async def _on_callback_impl(update, context):
     if data.startswith("pkp_"):
         st = deposit_input.get(uid)
         if not st or st.get('step') != 'paytm_keypad':
-            return
+            st = _recover_keypad_state(q, uid, 'paytm_keypad')
         a = data.replace("pkp_", "")
         cv = st.get('val', "0")
         if a.isdigit():
@@ -416,11 +428,26 @@ async def _on_callback_impl(update, context):
         elif a == "done":
             amt = int(cv); min_d = get_min_deposit()
             if amt < min_d:
-                try: await q.answer(f"Min ₹{min_d}", show_alert=True)
+                try: await q.answer(f"Minimum deposit is ₹{min_d}", show_alert=True)
+                except: pass
+                try:
+                    await q.edit_message_text(
+                        f"<b>{emo('🔑')} AMOUNT</b>\n\n{emo('💰')} <code>₹{cv}</code>\n\n"
+                        f"{emo('⚠️')} <b>Minimum deposit is ₹{min_d}.</b> Enter a higher amount.",
+                        parse_mode="HTML", reply_markup=keypad_kb("pkp_"))
                 except: pass
                 return
             deposit_input.pop(uid, None)
-            await show_paytm_qr(q.message.chat_id, uid, amt)
+            try:
+                await show_paytm_qr(q.message.chat_id, uid, amt)
+            except Exception as _e:
+                log.exception("Paytm QR failed: %s", _e)
+                try:
+                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[ibtn("HOME","home",emoji="🏠",style="primary")]]))
+                except Exception:
+                    pass
             return
         st['val'] = cv
         try:
@@ -455,7 +482,7 @@ async def _on_callback_impl(update, context):
     if data.startswith("mkp_"):
         st = deposit_input.get(uid)
         if not st or st.get('step') != 'manual_upi_keypad':
-            return
+            st = _recover_keypad_state(q, uid, 'manual_upi_keypad')
         a = data.replace("mkp_", "")
         cv = st.get('val', "0")
         if a.isdigit():
@@ -466,11 +493,26 @@ async def _on_callback_impl(update, context):
         elif a == "done":
             amt = int(cv); min_d = get_min_deposit()
             if amt < min_d:
-                try: await q.answer(f"Min ₹{min_d}", show_alert=True)
+                try: await q.answer(f"Minimum deposit is ₹{min_d}", show_alert=True)
+                except: pass
+                try:
+                    await q.edit_message_text(
+                        f"<b>{emo('🔑')} AMOUNT</b>\n\n{emo('💰')} <code>₹{cv}</code>\n\n"
+                        f"{emo('⚠️')} <b>Minimum deposit is ₹{min_d}.</b> Enter a higher amount.",
+                        parse_mode="HTML", reply_markup=keypad_kb("mkp_"))
                 except: pass
                 return
             deposit_input.pop(uid, None)
-            await show_manual_upi_qr(q.message.chat_id, uid, amt)
+            try:
+                await show_manual_upi_qr(q.message.chat_id, uid, amt)
+            except Exception as _e:
+                log.exception("Manual UPI QR failed: %s", _e)
+                try:
+                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[ibtn("HOME","home",emoji="🏠",style="primary")]]))
+                except Exception:
+                    pass
             return
         st['val'] = cv
         try:
@@ -485,6 +527,8 @@ async def _on_callback_impl(update, context):
     # Auto UPI keypad
     if data.startswith("kp_"):
         a = data.replace("kp_", "")
+        if uid not in deposit_input or deposit_input[uid].get('step') != 'upi_keypad':
+            _recover_keypad_state(q, uid, 'upi_keypad')
         cv = deposit_input.get(uid, {}).get('val', "0")
         if a.isdigit():
             cv = a if cv == "0" else cv + a
@@ -493,11 +537,27 @@ async def _on_callback_impl(update, context):
         elif a == "done":
             amt = int(cv); min_d = get_min_deposit()
             if amt < min_d:
-                try: await q.answer(f"Min ₹{min_d}", show_alert=True)
+                try: await q.answer(f"Minimum deposit is ₹{min_d}", show_alert=True)
+                except: pass
+                try:
+                    await q.edit_message_text(
+                        f"<b>{emo('🔑')} AMOUNT</b>\n\n{emo('💰')} <code>₹{cv}</code>\n\n"
+                        f"{emo('⚠️')} <b>Minimum deposit is ₹{min_d}.</b> Enter a higher amount.",
+                        parse_mode="HTML", reply_markup=keypad_kb("kp_"))
                 except: pass
                 return
             deposit_input.pop(uid, None)
-            await show_upi_qr(q.message.chat_id, uid, amt); return
+            try:
+                await show_upi_qr(q.message.chat_id, uid, amt)
+            except Exception as _e:
+                log.exception("FamPay QR failed: %s", _e)
+                try:
+                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[ibtn("HOME","home",emoji="🏠",style="primary")]]))
+                except Exception:
+                    pass
+            return
         deposit_input[uid] = {'step': 'upi_keypad', 'val': cv}
         try:
             await q.edit_message_text(f"<b>{emo('🔑')} AMOUNT</b>\n\n{emo('💰')} <code>₹{cv}</code>",

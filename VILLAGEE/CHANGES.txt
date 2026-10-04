@@ -14,3 +14,12 @@ UPDATE 2 — QR after "Done" (FamPay / Paytm / Manual)
 - Keypad me amount ke baad ✅ dabate hi QR photo jaati hai; Telegram reject kare to bina premium emoji/style ke dobara try, phir UPI link message.
 - Mini app QR (Paytm/FamPay/Manual) server se data-URI me aata hai.
 - Caption ko raw HTML me kaatne ka bug hataya.
+
+UPDATE 3 — Paytm / FamPay "✅ Done" par QR nahi aana (asli bug)
+- Kaaran: DB me "ek user + ek provider + ek amount = sirf ek pending order" rule hai. Purana pending/manual_pending order
+  (bot restart ke baad expire nahi hua) naya order insert hone se rokta tha -> IntegrityError chup-chaap -> QR nahi.
+- Fix: database.reserve_upi_order() — purane atke orders auto-expire karke naya order banata hai (kabhi fail nahi). Bot + Mini App dono me.
+- Manual UPI ke orders ab provider='manual' se bante hain (FamPay se takrate nahi).
+- Bot restart ke baad keypad state kho jaye to bhi ✅ ab amount message se recover karke QR bhejta hai.
+- ✅ par koi bhi error aaye to user ko "QR could not be created" message milta hai (pehle kuch nahi dikhta tha), log me full error.
+- Min deposit se kam amount par ab message me bhi "Minimum deposit is ₹X" likha aata hai (sirf popup nahi).

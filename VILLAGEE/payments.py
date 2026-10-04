@@ -75,34 +75,17 @@ async def complete_upi_order(oid, uid, amount, qr_msg_id=None, source="fampay_ap
     return True
 
 async def show_upi_qr(chat_id, uid, amount):
-    # Reuse one recent pending FamPay order for the same user/amount.
-    existing = get_active_upi_order(uid, "fampay", amount)
-    oid = existing["order_id"] if existing else generate_unique_order_id(uid)
     upi_id = get_fampay_upi_id()
     if not upi_id:
         await _tg_post("sendMessage", {"chat_id": uid, "parse_mode": "HTML",
             "text": f"{emo('❌')} <b>FamPay Automatic is not configured.</b>\nAsk admin to set the FamPay UPI ID."})
         return
+    # Reserve the order FIRST (never fails on stale/duplicate pending rows), then build the QR for that exact id.
+    oid, existing = reserve_upi_order(uid, "fampay", amount)
     qr_bytes = None
     try:
         qr_bytes = await asyncio.to_thread(generate_qr_png_bytes, upi_id, str(amount), oid, UPI_MERCHANT_NAME)
     except Exception as e: log.error(f"FamPay QR generate failed: {e}")
-    if not existing:
-        try:
-            cur.execute("""INSERT INTO upi_orders
-                (order_id, user_id, amount, status, qr_msg_id, created_ts, provider)
-                VALUES (?,?,?,?,?,?,?)""",
-                (oid, uid, amount, "pending", 0, time.time(), "fampay"))
-            db.commit()
-        except sqlite3.IntegrityError:
-            db.rollback()
-            existing = get_active_upi_order(uid, "fampay", amount)
-            if not existing:
-                raise
-            oid = existing["order_id"]
-    else:
-        cur.execute("UPDATE upi_orders SET qr_msg_id=0 WHERE order_id=?", (oid,))
-        db.commit()
     usdt_amt = round(amount / get_rate(), 2)
     msg = (f"<b>{emo('💳')} Secure UPI (15-Min)</b>\n\n"
            f"{emo('💰')} Amount: <b>₹{amount}</b> (≈ ${usdt_amt})\n"
@@ -526,3 +509,4 @@ from logs import (
 from rich_ui import _tg_post, _tg_send_photo_buffer, send_qr_photo
 from state import deposit_input, get_user_lock, temp_data, waiting_proof, waiting_utr
 from utils import QR_AVAILABLE, create_upi_url, generate_qr_png_bytes, generate_unique_order_id
+from database import reserve_upi_order
