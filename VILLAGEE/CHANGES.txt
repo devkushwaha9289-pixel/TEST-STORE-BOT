@@ -23,3 +23,9 @@ UPDATE 3 — Paytm / FamPay "✅ Done" par QR nahi aana (asli bug)
 - Bot restart ke baad keypad state kho jaye to bhi ✅ ab amount message se recover karke QR bhejta hai.
 - ✅ par koi bhi error aaye to user ko "QR could not be created" message milta hai (pehle kuch nahi dikhta tha), log me full error.
 - Min deposit se kam amount par ab message me bhi "Minimum deposit is ₹X" likha aata hai (sirf popup nahi).
+
+UPDATE 4 — "QR could not be created" (FamPay/Paytm) — asli kaaran
+- Purane database me purani UNIQUE index (user+provider+amount) thi jo har order ko rokti thi (success wale ko bhi).
+  Isse us amount ka naya order kabhi nahi ban pata tha.
+- Fix: bot start par index apne aap sahi (sirf pending wali) bana di jaati hai; order banate waqt bhi auto-repair + retry.
+- Agar phir bhi koi error aaye to user ko error ka reason bhi dikhta hai (<code>...</code>) aur log me full traceback.

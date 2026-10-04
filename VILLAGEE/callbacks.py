@@ -443,7 +443,8 @@ async def _on_callback_impl(update, context):
             except Exception as _e:
                 log.exception("Paytm QR failed: %s", _e)
                 try:
-                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.",
+                    import html as _html
+                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.\n\n<code>{_html.escape(str(_e)[:140])}</code>",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[ibtn("HOME","home",emoji="🏠",style="primary")]]))
                 except Exception:
@@ -508,7 +509,8 @@ async def _on_callback_impl(update, context):
             except Exception as _e:
                 log.exception("Manual UPI QR failed: %s", _e)
                 try:
-                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.",
+                    import html as _html
+                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.\n\n<code>{_html.escape(str(_e)[:140])}</code>",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[ibtn("HOME","home",emoji="🏠",style="primary")]]))
                 except Exception:
@@ -552,7 +554,8 @@ async def _on_callback_impl(update, context):
             except Exception as _e:
                 log.exception("FamPay QR failed: %s", _e)
                 try:
-                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.",
+                    import html as _html
+                    await q.message.reply_text(f"{emo('❌')} <b>QR could not be created.</b>\nPlease press ✅ again or try later.\n\n<code>{_html.escape(str(_e)[:140])}</code>",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[ibtn("HOME","home",emoji="🏠",style="primary")]]))
                 except Exception:

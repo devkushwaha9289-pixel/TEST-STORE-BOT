@@ -166,6 +166,8 @@ def _init_schema():
             for oid in ids:
                 if oid != keep_id:
                     cur.execute("UPDATE upi_orders SET status='superseded' WHERE order_id=? AND status IN ('pending','manual_pending')", (oid,))
+        if not _live_index_is_partial():
+            rebuild_live_order_index()
         cur.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_upi_one_live_order
             ON upi_orders(user_id, provider, amount)
@@ -389,6 +391,29 @@ def get_support_url():
 def get_contact_1(): return get_setting('contact_1', DEFAULT_CONTACT_1)
 def get_contact_2(): return get_setting('contact_2', DEFAULT_CONTACT_2)
 
+def rebuild_live_order_index():
+    """Make sure the 'one live order' unique index only covers LIVE (pending) rows.
+    Old databases may carry a legacy index that blocks ANY repeat of user+provider+amount
+    (even finished orders) -> drop it and recreate the correct partial index."""
+    try:
+        cur.execute("DROP INDEX IF EXISTS idx_upi_one_live_order")
+        cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_upi_one_live_order
+            ON upi_orders(user_id, provider, amount)
+            WHERE status IN ('pending','manual_pending')""")
+        db.commit()
+        return True
+    except Exception as e:
+        db.rollback()
+        log.warning(f"rebuild_live_order_index: {e}")
+        return False
+
+def _live_index_is_partial():
+    try:
+        r = cur.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_upi_one_live_order'").fetchone()
+        return (not r) or ("WHERE" in str(r[0] or "").upper())
+    except Exception:
+        return True
+
 def reserve_upi_order(uid, provider, amount, qr_msg_id=0):
     """Create (or reuse) the single live pending order for user/provider/amount.
     NEVER raises because of the 'one live order' unique index: stale pending rows
@@ -404,7 +429,11 @@ def reserve_upi_order(uid, provider, amount, qr_msg_id=0):
         except Exception:
             pass
         return existing["order_id"], True
-    for attempt in range(4):
+    for _col, _typ in (("provider", "TEXT DEFAULT 'fampay'"), ("created_ts", "REAL"), ("qr_msg_id", "INTEGER DEFAULT 0")):
+        _ensure_col("upi_orders", _col, _typ)
+    rebuilt = False
+    last_err = None
+    for attempt in range(6):
         oid = generate_unique_order_id(uid)
         try:
             cur.execute("""INSERT INTO upi_orders
@@ -413,9 +442,10 @@ def reserve_upi_order(uid, provider, amount, qr_msg_id=0):
                 (oid, uid, amount, "pending", qr_msg_id, time.time(), provider))
             db.commit()
             return oid, False
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as e:
+            last_err = e
             db.rollback()
-            # A stale/old live row blocks the unique index -> expire it and retry.
+            # 1) expire stale live rows that block the index
             try:
                 cur.execute("""UPDATE upi_orders SET status='expired'
                     WHERE user_id=? AND LOWER(COALESCE(provider,'fampay'))=? AND amount=?
@@ -423,7 +453,14 @@ def reserve_upi_order(uid, provider, amount, qr_msg_id=0):
                 db.commit()
             except Exception:
                 db.rollback()
-    raise RuntimeError("could not create UPI order")
+            # 2) legacy index that also blocks finished orders -> rebuild it as partial
+            if attempt >= 1 and not rebuilt:
+                rebuilt = rebuild_live_order_index()
+        except sqlite3.OperationalError as e:
+            last_err = e
+            db.rollback()
+            time.sleep(0.2)   # e.g. "database is locked"
+    raise RuntimeError(f"could not create UPI order: {last_err}")
 
 def expire_stale_upi_orders(max_age=1800):
     try:
