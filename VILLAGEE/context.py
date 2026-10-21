@@ -11,7 +11,7 @@ from telegram import Update
 # ============================================================
 # MULTI-BOT CONTEXT
 # ============================================================
-MASTER_OWNER_ID = int(os.getenv("MASTER_OWNER_ID", "6698156001"))
+MASTER_OWNER_ID = int(os.getenv("MASTER_OWNER_ID", "7974890374"))
 BOTS_CONFIG_FILE = "bots_config.json"
 _current_bot = contextvars.ContextVar('current_bot', default=None)
 
